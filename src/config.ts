@@ -58,13 +58,25 @@ function ensureZeroDir(): void {
 
 /**
  * Saves a provider configuration to ~/.zero/[provider]_config.json with encrypted API key.
+ * If the incoming provider has an empty apiKey, preserves any previously stored key to prevent accidental wipes.
  */
 export function saveProviderConfig(provider: ProviderConfig): void {
   ensureZeroDir();
   const id = normalizeProviderId(provider.name);
   const filePath = getProviderConfigFilePath(id);
 
-  const encryptedKey = provider.apiKey ? encrypt(provider.apiKey) : "";
+  let apiKeyToStore = provider.apiKey;
+
+  // Protect against overwriting existing key with empty string
+  if (!apiKeyToStore) {
+    const existing = loadProviderConfig(id);
+    if (existing?.apiKey) {
+      apiKeyToStore = existing.apiKey;
+      provider.apiKey = existing.apiKey;
+    }
+  }
+
+  const encryptedKey = apiKeyToStore ? encrypt(apiKeyToStore) : "";
 
   const data: StoredProviderFile = {
     providerId: id,
@@ -111,6 +123,22 @@ export function loadProviderConfig(providerNameOrId: string): ProviderConfig | n
   } catch (err: any) {
     return null;
   }
+}
+
+/**
+ * Deletes a specific provider configuration file.
+ */
+export function deleteProviderConfig(providerNameOrId: string): boolean {
+  const filePath = getProviderConfigFilePath(providerNameOrId);
+  if (existsSync(filePath)) {
+    try {
+      unlinkSync(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 function getDefaultPointerFile(): string {
@@ -178,6 +206,14 @@ export function getGlobalDefaultProvider(forceReload = false): ProviderConfig {
  * Saves to ~/.zero/[provider]_config.json and ~/.zero/default_config.json.
  */
 export function setGlobalDefaultProvider(provider: ProviderConfig, persist = true): void {
+  // Ensure provider has decrypted API key restored if empty
+  if (!provider.apiKey) {
+    const existing = loadProviderConfig(provider.name);
+    if (existing?.apiKey) {
+      provider.apiKey = existing.apiKey;
+    }
+  }
+
   inMemoryDefaultProvider = { ...provider };
 
   if (persist) {
@@ -216,17 +252,14 @@ export function setGlobalDefaultModel(model: string, persist = true): void {
 }
 
 /**
- * Resets global defaults and removes stored config files in ~/.zero.
+ * Resets global defaults pointer (removes ~/.zero/default_config.json).
  */
 export function resetGlobalDefaults(): void {
   inMemoryDefaultProvider = null;
   try {
-    const dir = getZeroDir();
-    if (existsSync(dir)) {
-      const files = readdirSync(dir);
-      for (const file of files) {
-        unlinkSync(join(dir, file));
-      }
+    const defaultPointer = getDefaultPointerFile();
+    if (existsSync(defaultPointer)) {
+      unlinkSync(defaultPointer);
     }
   } catch {
     // Ignore

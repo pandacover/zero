@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getGlobalDefaultProvider, getZeroDir, loadProviderConfig } from "./config.ts";
+import { decrypt, encrypt } from "./crypto.ts";
+import { getProviderPreset } from "./providers.ts";
 import { defaultTools } from "./tools.ts";
 import type { Message, ProviderConfig, SessionSnapshot, Tool } from "./types.ts";
 
@@ -56,12 +58,14 @@ export class Session {
   }
 
   /**
-   * Saves the session to ~/.zero/sessions/[id].json.
+   * Saves the session to ~/.zero/sessions/[id].json with encrypted API key.
    */
   save(): void {
     ensureSessionsDir();
     this.updatedAt = new Date().toISOString();
     const filePath = join(getSessionsDir(), `${this.id}.json`);
+
+    const encryptedKey = this.provider.apiKey ? encrypt(this.provider.apiKey) : "";
 
     const data = {
       id: this.id,
@@ -71,6 +75,7 @@ export class Session {
         name: this.provider.name,
         baseURL: this.provider.baseURL,
         model: this.provider.model,
+        encryptedApiKey: encryptedKey,
         defaultModels: this.provider.defaultModels,
         supportsReasoning: this.provider.supportsReasoning,
       },
@@ -99,15 +104,28 @@ export class Session {
       const raw = readFileSync(filePath, "utf-8");
       const data = JSON.parse(raw);
 
-      // Restore decrypted API key from stored provider config
+      // 1. Try to decrypt key directly from session file
+      let decryptedKey = data.provider?.encryptedApiKey ? decrypt(data.provider.encryptedApiKey) : "";
+
+      // 2. If empty, check stored provider config on disk
       const storedProvider = loadProviderConfig(data.provider?.name || "");
+      if (!decryptedKey && storedProvider?.apiKey) {
+        decryptedKey = storedProvider.apiKey;
+      }
+
+      // 3. If still empty, check preset environment variable
+      const preset = getProviderPreset(data.provider?.name || "");
+      if (!decryptedKey && preset?.apiKeyEnvVar && process.env[preset.apiKeyEnvVar]) {
+        decryptedKey = process.env[preset.apiKeyEnvVar]!;
+      }
+
       const provider: ProviderConfig = {
-        name: data.provider?.name || storedProvider?.name || "Custom",
-        baseURL: data.provider?.baseURL || storedProvider?.baseURL || "http://localhost:8000/v1",
-        apiKey: storedProvider?.apiKey || "",
-        model: data.provider?.model || storedProvider?.model || "default-model",
-        defaultModels: data.provider?.defaultModels || storedProvider?.defaultModels || [],
-        supportsReasoning: data.provider?.supportsReasoning ?? storedProvider?.supportsReasoning ?? false,
+        name: data.provider?.name || storedProvider?.name || preset?.name || "Custom",
+        baseURL: data.provider?.baseURL || storedProvider?.baseURL || preset?.defaultBaseURL || "http://localhost:8000/v1",
+        apiKey: decryptedKey,
+        model: data.provider?.model || storedProvider?.model || preset?.defaultModels[0] || "default-model",
+        defaultModels: data.provider?.defaultModels || storedProvider?.defaultModels || preset?.defaultModels || [],
+        supportsReasoning: data.provider?.supportsReasoning ?? storedProvider?.supportsReasoning ?? preset?.supportsReasoning ?? false,
       };
 
       return new Session({
@@ -144,7 +162,14 @@ export class Session {
             if (data.id) {
               results.push({
                 id: data.id,
-                provider: data.provider,
+                provider: {
+                  name: data.provider?.name || "Custom",
+                  baseURL: data.provider?.baseURL || "http://localhost:8000/v1",
+                  apiKey: "", // Mask in snapshot listing
+                  model: data.provider?.model || "default-model",
+                  defaultModels: data.provider?.defaultModels || [],
+                  supportsReasoning: data.provider?.supportsReasoning,
+                },
                 systemPrompt: data.systemPrompt,
                 history: data.history || [],
                 toolNames: data.toolNames || [],

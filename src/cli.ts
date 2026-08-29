@@ -19,9 +19,21 @@ import { Spinner } from "./ui/spinner.ts";
 
 // Initialize session: restore most recent saved session, or create a new session with global defaults
 const savedList = Session.listAll();
-let activeSession = savedList.length > 0 && savedList[0]?.id
-  ? Session.load(savedList[0].id) || Session.createNew()
-  : Session.createNew();
+let activeSession: Session;
+if (savedList.length > 0 && savedList[0]?.id) {
+  activeSession = Session.load(savedList[0].id) || Session.createNew();
+} else {
+  activeSession = Session.createNew();
+}
+
+// Ensure active session provider has its API key decrypted
+const currentProvider = activeSession.getProvider();
+if (!currentProvider.apiKey) {
+  const stored = loadProviderConfig(currentProvider.name);
+  if (stored?.apiKey) {
+    activeSession.setApiKey(stored.apiKey);
+  }
+}
 
 const spinner = new Spinner();
 
@@ -146,6 +158,7 @@ async function handleProviderCommand(rl: ReturnType<typeof createInterface>): Pr
   // Save encrypted provider config to ~/.zero/[provider]_config.json
   saveProviderConfig(newConfig);
   activeSession.setProvider(newConfig);
+  activeSession.save();
 
   console.log(`\n\x1b[32m✔ Connected active session to ${chosenPreset.name} (Model: ${defaultModel})\x1b[0m`);
   console.log(`\x1b[90m  Encrypted configuration saved to ~/.zero/${chosenPreset.id}_config.json\x1b[0m`);
@@ -194,7 +207,19 @@ async function handleModelCommand(rl: ReturnType<typeof createInterface>): Promi
 
   if (selectedModel) {
     activeSession.setModel(selectedModel);
-    saveProviderConfig(activeSession.getProvider());
+
+    // Ensure API key is preserved
+    const updatedProvider = activeSession.getProvider();
+    if (!updatedProvider.apiKey) {
+      const stored = loadProviderConfig(updatedProvider.name);
+      if (stored?.apiKey) {
+        updatedProvider.apiKey = stored.apiKey;
+        activeSession.setApiKey(stored.apiKey);
+      }
+    }
+
+    saveProviderConfig(updatedProvider);
+    activeSession.save();
     console.log(`\x1b[32m✔ Switched active session model to '${selectedModel}'.\x1b[0m`);
 
     const setAsDefault = await rl.question("Set this model as default for future new sessions? (y/N): ");
@@ -224,6 +249,12 @@ async function handleDefaultCommand(rl: ReturnType<typeof createInterface>): Pro
   switch (choice.trim()) {
     case "1": {
       const current = activeSession.getProvider();
+      if (!current.apiKey) {
+        const stored = loadProviderConfig(current.name);
+        if (stored?.apiKey) {
+          current.apiKey = stored.apiKey;
+        }
+      }
       setGlobalDefaultProvider(current);
       console.log(`\x1b[32m✔ Global default updated to: ${current.name} (${current.model})\x1b[0m\n`);
       break;
@@ -231,18 +262,26 @@ async function handleDefaultCommand(rl: ReturnType<typeof createInterface>): Pro
     case "2": {
       console.log("\nSelect Provider for Default:");
       PROVIDER_PRESETS.forEach((preset, index) => {
-        console.log(`  [${index + 1}] \x1b[33m${preset.name}\x1b[0m`);
+        const stored = loadProviderConfig(preset.id);
+        const hasKey = stored?.apiKey ? " \x1b[32m(key stored)\x1b[0m" : "";
+        console.log(`  [${index + 1}] \x1b[33m${preset.name}\x1b[0m${hasKey}`);
       });
       const pChoice = await rl.question("Enter provider number: ");
       const pIdx = parseInt(pChoice.trim(), 10) - 1;
       if (pIdx >= 0 && pIdx < PROVIDER_PRESETS.length) {
         const preset = PROVIDER_PRESETS[pIdx]!;
         const stored = loadProviderConfig(preset.id);
-        const apiKey = stored?.apiKey || (preset.apiKeyEnvVar ? process.env[preset.apiKeyEnvVar] || "" : "not-needed");
+        let apiKey = stored?.apiKey || (preset.apiKeyEnvVar ? process.env[preset.apiKeyEnvVar] || "" : "");
+        if (!apiKey && preset.requiresApiKey) {
+          apiKey = await rl.question(`Enter API Key for ${preset.name}: `);
+        }
+        if (!apiKey && !preset.requiresApiKey) {
+          apiKey = "not-needed";
+        }
         const cfg = {
           name: preset.name,
           baseURL: stored?.baseURL || preset.defaultBaseURL,
-          apiKey,
+          apiKey: apiKey.trim(),
           model: stored?.model || preset.defaultModels[0] || "default-model",
           defaultModels: preset.defaultModels,
           supportsReasoning: preset.supportsReasoning,
@@ -254,7 +293,7 @@ async function handleDefaultCommand(rl: ReturnType<typeof createInterface>): Pro
     }
     case "3":
       resetGlobalDefaults();
-      console.log(`\x1b[32m✔ Reset global defaults to factory settings.\x1b[0m\n`);
+      console.log(`\x1b[32m✔ Reset default pointer to factory settings.\x1b[0m\n`);
       break;
     default:
       console.log();

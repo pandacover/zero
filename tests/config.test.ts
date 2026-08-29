@@ -138,4 +138,31 @@ describe("~/.zero Directory Configuration & Encrypted Storage", () => {
     expect(globalDefault.apiKey).toBe("gsk_defaultkey_777");
     expect(globalDefault.model).toBe("llama-3.3-70b-versatile");
   });
+
+  it("preserves existing encrypted API key when updating model or other fields with empty apiKey", () => {
+    const initial: ProviderConfig = {
+      name: "OpenRouter",
+      baseURL: "https://openrouter.ai/api/v1",
+      apiKey: "sk-or-v1-secretkey123",
+      model: "anthropic/claude-3.5-sonnet",
+      defaultModels: ["anthropic/claude-3.5-sonnet"],
+    };
+
+    saveProviderConfig(initial);
+
+    // Update model only (apiKey is omitted / empty)
+    const updateWithoutKey: ProviderConfig = {
+      name: "OpenRouter",
+      baseURL: "https://openrouter.ai/api/v1",
+      apiKey: "", // empty
+      model: "deepseek/deepseek-r1",
+      defaultModels: ["anthropic/claude-3.5-sonnet"],
+    };
+
+    saveProviderConfig(updateWithoutKey);
+
+    const loaded = loadProviderConfig("openrouter");
+    expect(loaded?.model).toBe("deepseek/deepseek-r1");
+    expect(loaded?.apiKey).toBe("sk-or-v1-secretkey123"); // Key was preserved!
+  });
 });

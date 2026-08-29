@@ -1,14 +1,21 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { hostname, userInfo } from "node:os";
 
+let cachedMasterKey: Buffer | null = null;
+
 /**
  * Derives a consistent machine/user-level master encryption key.
  * Can be overridden via ZERO_ENCRYPTION_KEY environment variable.
  */
 function getMasterKey(): Buffer {
+  if (cachedMasterKey) {
+    return cachedMasterKey;
+  }
+
   const customKey = process.env.ZERO_ENCRYPTION_KEY;
   if (customKey && customKey.length >= 16) {
-    return scryptSync(customKey, "zero-salt-static", 32);
+    cachedMasterKey = scryptSync(customKey, "zero-salt-static", 32);
+    return cachedMasterKey;
   }
 
   let machineIdentifier = "zero-agent-default-secret";
@@ -20,7 +27,8 @@ function getMasterKey(): Buffer {
     // Fallback if OS userInfo fails
   }
 
-  return scryptSync(machineIdentifier, "zero-storage-salt", 32);
+  cachedMasterKey = scryptSync(machineIdentifier, "zero-storage-salt", 32);
+  return cachedMasterKey;
 }
 
 const ALGORITHM = "aes-256-gcm";
@@ -75,7 +83,7 @@ export function decrypt(encryptedData: string): string {
 
     return decrypted;
   } catch (err: any) {
-    // If decryption fails, return empty or throw clear error
+    // If decryption fails, return empty
     return "";
   }
 }
