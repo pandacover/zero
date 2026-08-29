@@ -1,0 +1,17 @@
+{
+  "name": "zero-agent",
+  "version": "1.0.0",
+  "description": "Vanilla TypeScript and Bun Agent Loop with Discrete Event Streaming and Coding Tools",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "cli": "bun run src/cli.ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}
