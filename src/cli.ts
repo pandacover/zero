@@ -2,7 +2,9 @@ import { createInterface } from "node:readline/promises";
 import { Agent } from "./agent.ts";
 import {
   getGlobalDefaultProvider,
+  loadProviderConfig,
   resetGlobalDefaults,
+  saveProviderConfig,
   setGlobalDefaultModel,
   setGlobalDefaultProvider,
 } from "./config.ts";
@@ -29,7 +31,7 @@ function printBanner(): void {
   console.log("  \x1b[33m/new\x1b[0m      - Create a new session (inherits global default provider & model)");
   console.log("  \x1b[33m/sessions\x1b[0m - List and switch between active sessions");
   console.log("  \x1b[33m/config\x1b[0m   - View active session and global default configuration");
-  console.log("  \x1b[33m/tools\x1b[0m    - View active coding tools (glob, grep, read, write, edit)");
+  console.log("  \x1b[33m/tools\x1b[0m    - View active coding tools (browse_skills, glob, grep, read, write, edit)");
   console.log("  \x1b[33m/history\x1b[0m  - View conversation history");
   console.log("  \x1b[33m/clear\x1b[0m    - Clear conversation memory of active session");
   console.log("  \x1b[33m/help\x1b[0m     - Show this help message");
@@ -61,7 +63,9 @@ function printConfigSummary(): void {
 async function handleProviderCommand(rl: ReturnType<typeof createInterface>): Promise<void> {
   console.log("\n\x1b[1mSelect a Provider:\x1b[0m");
   PROVIDER_PRESETS.forEach((preset, index) => {
-    console.log(`  [${index + 1}] \x1b[33m${preset.name}\x1b[0m - ${preset.description}`);
+    const stored = loadProviderConfig(preset.id);
+    const hasKey = stored?.apiKey ? " \x1b[32m[Encrypted key saved in ./.zero/]\x1b[0m" : "";
+    console.log(`  [${index + 1}] \x1b[33m${preset.name}\x1b[0m - ${preset.description}${hasKey}`);
   });
 
   const choiceStr = await rl.question("\nEnter provider number or ID (or press Enter to cancel): ");
@@ -83,25 +87,34 @@ async function handleProviderCommand(rl: ReturnType<typeof createInterface>): Pr
 
   console.log(`\nSelected provider: \x1b[32m${chosenPreset.name}\x1b[0m`);
 
+  // Check if existing stored config exists for this provider
+  const storedConfig = loadProviderConfig(chosenPreset.id);
+
   // Prompt for Base URL
-  const customBaseURL = await rl.question(`Base URL [${chosenPreset.defaultBaseURL}]: `);
-  const baseURL = customBaseURL.trim() || chosenPreset.defaultBaseURL;
+  const defaultBaseURL = storedConfig?.baseURL || chosenPreset.defaultBaseURL;
+  const customBaseURL = await rl.question(`Base URL [${defaultBaseURL}]: `);
+  const baseURL = customBaseURL.trim() || defaultBaseURL;
 
   // Prompt for API Key
-  const currentKey = activeSession.getProvider().apiKey;
-  const keyPrompt = chosenPreset.requiresApiKey
-    ? `API Key (leave blank to use env var or current): `
-    : `API Key [optional, default 'not-needed']: `;
+  const storedKey = storedConfig?.apiKey || (chosenPreset.apiKeyEnvVar ? process.env[chosenPreset.apiKeyEnvVar] : "");
+  let keyPrompt = "";
+  if (storedKey) {
+    const masked = `${storedKey.slice(0, 4)}...${storedKey.slice(-4)}`;
+    keyPrompt = `API Key [press Enter to keep stored key: ${masked}]: `;
+  } else if (chosenPreset.requiresApiKey) {
+    keyPrompt = `API Key: `;
+  } else {
+    keyPrompt = `API Key [optional, default 'not-needed']: `;
+  }
 
   const inputKey = await rl.question(keyPrompt);
   let apiKey = inputKey.trim();
 
   if (!apiKey) {
-    const envKey = chosenPreset.apiKeyEnvVar ? process.env[chosenPreset.apiKeyEnvVar] : undefined;
-    apiKey = envKey || currentKey || (chosenPreset.requiresApiKey ? "" : "not-needed");
+    apiKey = storedKey || (chosenPreset.requiresApiKey ? "" : "not-needed");
   }
 
-  const defaultModel = chosenPreset.defaultModels[0] || "default-model";
+  const defaultModel = storedConfig?.model || chosenPreset.defaultModels[0] || "default-model";
 
   const newConfig = {
     name: chosenPreset.name,
@@ -112,8 +125,12 @@ async function handleProviderCommand(rl: ReturnType<typeof createInterface>): Pr
     supportsReasoning: chosenPreset.supportsReasoning,
   };
 
+  // Save encrypted provider config to ./.zero/[provider]_config.json
+  saveProviderConfig(newConfig);
   activeSession.setProvider(newConfig);
+
   console.log(`\n\x1b[32m✔ Connected active session to ${chosenPreset.name} (Model: ${defaultModel})\x1b[0m`);
+  console.log(`\x1b[90m  Encrypted configuration saved to ./.zero/${chosenPreset.id}_config.json\x1b[0m`);
 
   const setAsDefault = await rl.question("Set this provider as global default for future new sessions? (y/N): ");
   if (setAsDefault.trim().toLowerCase() === "y" || setAsDefault.trim().toLowerCase() === "yes") {
@@ -159,6 +176,7 @@ async function handleModelCommand(rl: ReturnType<typeof createInterface>): Promi
 
   if (selectedModel) {
     activeSession.setModel(selectedModel);
+    saveProviderConfig(activeSession.getProvider());
     console.log(`\x1b[32m✔ Switched active session model to '${selectedModel}'.\x1b[0m`);
 
     const setAsDefault = await rl.question("Set this model as default for future new sessions? (y/N): ");
@@ -201,12 +219,13 @@ async function handleDefaultCommand(rl: ReturnType<typeof createInterface>): Pro
       const pIdx = parseInt(pChoice.trim(), 10) - 1;
       if (pIdx >= 0 && pIdx < PROVIDER_PRESETS.length) {
         const preset = PROVIDER_PRESETS[pIdx]!;
-        const apiKey = preset.apiKeyEnvVar ? process.env[preset.apiKeyEnvVar] || "" : "not-needed";
+        const stored = loadProviderConfig(preset.id);
+        const apiKey = stored?.apiKey || (preset.apiKeyEnvVar ? process.env[preset.apiKeyEnvVar] || "" : "not-needed");
         const cfg = {
           name: preset.name,
-          baseURL: preset.defaultBaseURL,
+          baseURL: stored?.baseURL || preset.defaultBaseURL,
           apiKey,
-          model: preset.defaultModels[0] || "default-model",
+          model: stored?.model || preset.defaultModels[0] || "default-model",
           defaultModels: preset.defaultModels,
           supportsReasoning: preset.supportsReasoning,
         };

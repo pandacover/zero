@@ -1,5 +1,6 @@
 node_modules
 .test_sandbox
+.zero
 .zero-config.json
 .DS_Store
 *.log
