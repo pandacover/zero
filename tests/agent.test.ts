@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { resolve } from "node:path";
 import { Agent } from "../src/agent.ts";
 import { OpenAICompatibleClient } from "../src/client.ts";
 import {
@@ -15,6 +16,9 @@ import {
 import { Session } from "../src/session.ts";
 import { defaultTools } from "../src/tools.ts";
 import type { AgentEvent, LLMResponse, Message, ProviderConfig, Tool } from "../src/types.ts";
+
+const TEST_ZERO_DIR = resolve("./.test_sandbox/.zero");
+process.env.ZERO_CONFIG_DIR = TEST_ZERO_DIR;
 
 /**
  * Mock Client for deterministic testing of the Agent generator.

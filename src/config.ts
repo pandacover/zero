@@ -124,6 +124,10 @@ let inMemoryDefaultProvider: ProviderConfig | null = null;
  * Reads from ~/.zero/default_config.json or first saved ~/.zero/[provider]_config.json.
  */
 export function getGlobalDefaultProvider(forceReload = false): ProviderConfig {
+  if (inMemoryDefaultProvider && !forceReload) {
+    return { ...inMemoryDefaultProvider };
+  }
+
   const defaultPointer = getDefaultPointerFile();
 
   // 1. Check default pointer file ~/.zero/default_config.json
@@ -142,10 +146,6 @@ export function getGlobalDefaultProvider(forceReload = false): ProviderConfig {
     } catch {
       // Ignore
     }
-  }
-
-  if (inMemoryDefaultProvider && !forceReload) {
-    return { ...inMemoryDefaultProvider };
   }
 
   // 2. Check if any ~/.zero/*_config.json exists

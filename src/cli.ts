@@ -451,10 +451,13 @@ export async function runCLI(): Promise<void> {
       console.log(`\x1b[33mWarning: No API key set for ${providerConfig.name}. Use /provider to configure your API key.\x1b[0m\n`);
     }
 
+    // Record user prompt to session immediately so input is persisted
+    activeSession.addMessage({ role: "user", content: trimmed });
+
     try {
       const generator = Agent.run(
         trimmed,
-        activeSession.getHistory(),
+        activeSession.getHistory().slice(0, -1),
         providerConfig,
         {
           systemPrompt: activeSession.getSystemPrompt(),
