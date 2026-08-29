@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import type { Tool } from "./types.ts";
 
@@ -18,49 +19,55 @@ export const browseSkillsTool: Tool = {
     },
   },
   execute: async (args: Record<string, any>): Promise<string> => {
-    const skillsDir = resolve("skills");
+    const candidateDirs = [
+      resolve("skills"), // Current workspace skills
+      resolve(import.meta.dir, "../skills"), // Built-in repository skills
+      join(homedir(), ".zero/skills"), // Global user skills
+    ];
+
     const requestedSkill = args.skillName ? String(args.skillName).trim().toLowerCase() : null;
+    const seenSkills = new Set<string>();
+    const results: string[] = [];
 
-    if (!existsSync(skillsDir)) {
-      return "No 'skills' directory found in the workspace.";
-    }
+    for (const skillsDir of candidateDirs) {
+      if (!existsSync(skillsDir)) continue;
 
-    try {
-      const glob = new Bun.Glob("*/SKILL.md");
-      const results: string[] = [];
+      try {
+        const glob = new Bun.Glob("*/SKILL.md");
+        for (const relFile of glob.scanSync({ cwd: skillsDir })) {
+          const fullPath = join(skillsDir, relFile);
+          const skillFolder = dirname(relFile);
+          const skillKey = skillFolder.toLowerCase();
 
-      for (const relFile of glob.scanSync({ cwd: skillsDir })) {
-        const fullPath = join(skillsDir, relFile);
-        const skillFolder = dirname(relFile);
+          if (seenSkills.has(skillKey)) continue;
 
-        if (requestedSkill && skillFolder.toLowerCase() !== requestedSkill) {
-          continue;
-        }
-
-        try {
-          const content = await Bun.file(fullPath).text();
-          // Extract YAML front-matter between --- and ---
-          const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-          if (match && match[1]) {
-            results.push(`### Skill: [${skillFolder}]\n\`\`\`yaml\n${match[1].trim()}\n\`\`\``);
-          } else {
-            results.push(`### Skill: [${skillFolder}]\n(No YAML front-matter found in ${relFile})`);
+          if (requestedSkill && skillKey !== requestedSkill) {
+            continue;
           }
-        } catch (readErr: any) {
-          results.push(`### Skill: [${skillFolder}]\nError reading skill: ${readErr.message}`);
+
+          try {
+            const content = await Bun.file(fullPath).text();
+            const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+            if (match && match[1]) {
+              seenSkills.add(skillKey);
+              results.push(`### Skill: [${skillFolder}]\n\`\`\`yaml\n${match[1].trim()}\n\`\`\``);
+            }
+          } catch {
+            // Ignore unreadable skill files
+          }
         }
+      } catch {
+        // Ignore directory read errors
       }
-
-      if (results.length === 0) {
-        return requestedSkill
-          ? `Skill '${requestedSkill}' was not found in 'skills/' directory.`
-          : "No skills found under 'skills/' directory.";
-      }
-
-      return `## Available Skills (${results.length} found):\n\n` + results.join("\n\n");
-    } catch (err: any) {
-      return `Error browsing skills: ${err.message || String(err)}`;
     }
+
+    if (results.length === 0) {
+      return requestedSkill
+        ? `Skill '${requestedSkill}' was not found in skills directories.`
+        : "No skills found under workspace or ~/.zero/skills directory.";
+    }
+
+    return `## Available Skills (${results.length} found):\n\n` + results.join("\n\n");
   },
 };
 

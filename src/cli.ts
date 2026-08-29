@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { createInterface } from "node:readline/promises";
 import { Agent } from "./agent.ts";
 import {

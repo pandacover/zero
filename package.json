@@ -5,6 +5,9 @@
   "main": "src/index.ts",
   "module": "src/index.ts",
   "type": "module",
+  "bin": {
+    "zero": "./src/cli.ts"
+  },
   "scripts": {
     "dev": "bun run src/index.ts",
     "cli": "bun run src/cli.ts",
