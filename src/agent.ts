@@ -8,6 +8,8 @@ import type {
 import { OpenAICompatibleClient } from "./client.ts";
 import { ToolRegistry } from "./tools.ts";
 
+export const DEFAULT_MAX_STEPS = 100;
+
 export interface AgentRunOptions {
   systemPrompt?: string;
   tools?: Tool[];
@@ -30,7 +32,7 @@ export class Agent {
     const client = options?.client ?? new OpenAICompatibleClient();
     const tools = options?.tools;
     const toolRegistry = tools && tools.length > 0 ? new ToolRegistry(tools) : null;
-    const maxSteps = options?.maxSteps ?? 10;
+    const maxSteps = options?.maxSteps ?? DEFAULT_MAX_STEPS;
 
     // Construct working history payload
     const workingHistory: Message[] = [];
