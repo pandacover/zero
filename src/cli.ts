@@ -17,9 +17,26 @@ import {
 import { Session } from "./session.ts";
 import { Spinner } from "./ui/spinner.ts";
 
-let activeSession = new Session();
-const sessions = new Map<string, Session>([[activeSession.id, activeSession]]);
+// Initialize session: restore most recent saved session, or create a new session with global defaults
+const savedList = Session.listAll();
+let activeSession = savedList.length > 0 && savedList[0]?.id
+  ? Session.load(savedList[0].id) || Session.createNew()
+  : Session.createNew();
+
 const spinner = new Spinner();
+
+function formatRelativeTime(dateStr?: string): string {
+  if (!dateStr) return "";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const secs = Math.max(0, Math.floor(diff / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
 function printBanner(): void {
   console.log("\x1b[1m\x1b[36m=====================================================\x1b[0m");
@@ -30,7 +47,7 @@ function printBanner(): void {
   console.log("  \x1b[33m/model\x1b[0m    - Select or switch model for active session");
   console.log("  \x1b[33m/default\x1b[0m  - Set/view global default provider & model for new sessions");
   console.log("  \x1b[33m/new\x1b[0m      - Create a new session (inherits global default provider & model)");
-  console.log("  \x1b[33m/sessions\x1b[0m - List and switch between active sessions");
+  console.log("  \x1b[33m/sessions\x1b[0m - List and switch between saved sessions");
   console.log("  \x1b[33m/config\x1b[0m   - View active session and global default configuration");
   console.log("  \x1b[33m/tools\x1b[0m    - View active coding tools (browse_skills, glob, grep, read, write, edit)");
   console.log("  \x1b[33m/history\x1b[0m  - View conversation history");
@@ -136,7 +153,7 @@ async function handleProviderCommand(rl: ReturnType<typeof createInterface>): Pr
   const setAsDefault = await rl.question("Set this provider as global default for future new sessions? (y/N): ");
   if (setAsDefault.trim().toLowerCase() === "y" || setAsDefault.trim().toLowerCase() === "yes") {
     setGlobalDefaultProvider(newConfig);
-    console.log(`\x1b[32m✔ Saved as global default.\x1b[0m\n`);
+    console.log(`\x1b[32m✔ Saved '${chosenPreset.name}' (${defaultModel}) as global default.\x1b[0m\n`);
   } else {
     console.log();
   }
@@ -182,8 +199,8 @@ async function handleModelCommand(rl: ReturnType<typeof createInterface>): Promi
 
     const setAsDefault = await rl.question("Set this model as default for future new sessions? (y/N): ");
     if (setAsDefault.trim().toLowerCase() === "y" || setAsDefault.trim().toLowerCase() === "yes") {
-      setGlobalDefaultModel(selectedModel);
-      console.log(`\x1b[32m✔ Saved '${selectedModel}' as global default model.\x1b[0m\n`);
+      setGlobalDefaultProvider(activeSession.getProvider());
+      console.log(`\x1b[32m✔ Saved '${activeSession.getProvider().name}' with model '${selectedModel}' as global default.\x1b[0m\n`);
     } else {
       console.log();
     }
@@ -247,26 +264,73 @@ async function handleDefaultCommand(rl: ReturnType<typeof createInterface>): Pro
 
 function handleNewSessionCommand(): void {
   const newSess = Session.createNew();
-  sessions.set(newSess.id, newSess);
   activeSession = newSess;
   const cfg = activeSession.getProvider();
-  console.log(`\x1b[32m✔ Created new session '${newSess.id}' with global default provider: ${cfg.name} (${cfg.model}).\x1b[0m\n`);
+  console.log(`\x1b[32m✔ Created new session '${newSess.id}' with default provider: ${cfg.name} (${cfg.model}).\x1b[0m\n`);
 }
 
 async function handleSessionsCommand(rl: ReturnType<typeof createInterface>): Promise<void> {
-  console.log(`\n\x1b[1mActive Sessions (${sessions.size}):\x1b[0m`);
-  const list = Array.from(sessions.values());
-  list.forEach((s, idx) => {
+  // Ensure current active session is saved
+  activeSession.save();
+
+  const savedList = Session.listAll();
+  console.log(`\n\x1b[1mSaved Sessions (${savedList.length}):\x1b[0m`);
+
+  if (savedList.length === 0) {
+    console.log("  (No saved sessions found. Use /new to create a session)\n");
+    return;
+  }
+
+  savedList.forEach((s, idx) => {
     const isCur = s.id === activeSession.id ? " \x1b[32m(active)\x1b[0m" : "";
-    const p = s.getProvider();
-    console.log(`  [${idx + 1}] ID: \x1b[36m${s.id}\x1b[0m - Provider: \x1b[33m${p.name}\x1b[0m (${p.model}) - Messages: ${s.getHistory().length}${isCur}`);
+    const p = s.provider;
+    const timeAgo = formatRelativeTime(s.updatedAt || s.createdAt);
+    console.log(
+      `  [${idx + 1}] ID: \x1b[36m${s.id}\x1b[0m | \x1b[33m${p.name}\x1b[0m (\x1b[35m${p.model}\x1b[0m) | ${s.history.length} msgs | ${timeAgo}${isCur}`
+    );
   });
 
-  const choiceStr = await rl.question("\nEnter session number to switch to (or Enter to cancel): ");
-  const choiceNum = parseInt(choiceStr.trim(), 10);
-  if (!isNaN(choiceNum) && choiceNum >= 1 && choiceNum <= list.length) {
-    activeSession = list[choiceNum - 1]!;
-    console.log(`\x1b[32m✔ Switched to session '${activeSession.id}'.\x1b[0m\n`);
+  console.log("\nActions:");
+  console.log("  - Enter number [1-" + savedList.length + "] to switch session");
+  console.log("  - Type 'new' to create a new session");
+  console.log("  - Type 'del <number>' to delete a session");
+  console.log("  - Press Enter to cancel");
+
+  const choiceStr = await rl.question("\nAction: ");
+  const trimmed = choiceStr.trim();
+  if (!trimmed) return;
+
+  if (trimmed.toLowerCase() === "new") {
+    handleNewSessionCommand();
+    return;
+  }
+
+  if (trimmed.toLowerCase().startsWith("del ") || trimmed.toLowerCase().startsWith("delete ")) {
+    const numPart = trimmed.replace(/^(del|delete)\s+/i, "");
+    const delIdx = parseInt(numPart, 10) - 1;
+    if (delIdx >= 0 && delIdx < savedList.length) {
+      const target = savedList[delIdx]!;
+      Session.delete(target.id);
+      console.log(`\x1b[32m✔ Deleted session '${target.id}'.\x1b[0m`);
+      if (activeSession.id === target.id) {
+        handleNewSessionCommand();
+      }
+      console.log();
+      return;
+    }
+  }
+
+  const choiceNum = parseInt(trimmed, 10);
+  if (!isNaN(choiceNum) && choiceNum >= 1 && choiceNum <= savedList.length) {
+    const selectedSnapshot = savedList[choiceNum - 1]!;
+    const loaded = Session.load(selectedSnapshot.id);
+    if (loaded) {
+      activeSession = loaded;
+      const p = activeSession.getProvider();
+      console.log(
+        `\x1b[32m✔ Switched to session '${activeSession.id}' (${p.name} - ${p.model}, ${activeSession.getHistory().length} messages).\x1b[0m\n`
+      );
+    }
   } else {
     console.log();
   }
@@ -299,6 +363,7 @@ export async function runCLI(): Promise<void> {
       switch (cmd) {
         case "/exit":
         case "/quit":
+          activeSession.save();
           console.log("\nExiting Zero Agent. Goodbye!");
           rl.close();
           process.exit(0);
@@ -323,6 +388,7 @@ export async function runCLI(): Promise<void> {
           break;
 
         case "/sessions":
+        case "/session":
           await handleSessionsCommand(rl);
           break;
 

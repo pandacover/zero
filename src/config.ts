@@ -123,11 +123,7 @@ let inMemoryDefaultProvider: ProviderConfig | null = null;
  * Retrieves the global default provider and model across all new sessions.
  * Reads from ~/.zero/default_config.json or first saved ~/.zero/[provider]_config.json.
  */
-export function getGlobalDefaultProvider(): ProviderConfig {
-  if (inMemoryDefaultProvider) {
-    return { ...inMemoryDefaultProvider };
-  }
-
+export function getGlobalDefaultProvider(forceReload = false): ProviderConfig {
   const defaultPointer = getDefaultPointerFile();
 
   // 1. Check default pointer file ~/.zero/default_config.json
@@ -140,12 +136,16 @@ export function getGlobalDefaultProvider(): ProviderConfig {
         if (loaded) {
           if (ptr.model) loaded.model = ptr.model;
           inMemoryDefaultProvider = loaded;
-          return { ...inMemoryDefaultProvider };
+          return { ...loaded };
         }
       }
     } catch {
       // Ignore
     }
+  }
+
+  if (inMemoryDefaultProvider && !forceReload) {
+    return { ...inMemoryDefaultProvider };
   }
 
   // 2. Check if any ~/.zero/*_config.json exists
@@ -159,7 +159,7 @@ export function getGlobalDefaultProvider(): ProviderConfig {
           const loaded = loadProviderConfig(providerId);
           if (loaded && (loaded.apiKey || loaded.name.includes("Local"))) {
             inMemoryDefaultProvider = loaded;
-            return { ...inMemoryDefaultProvider };
+            return { ...loaded };
           }
         }
       }

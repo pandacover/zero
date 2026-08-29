@@ -81,8 +81,11 @@ export interface AgentResult {
 }
 
 export interface SessionSnapshot {
+  id: string;
   provider: ProviderConfig;
   systemPrompt: string;
   history: Message[];
   toolNames: string[];
+  createdAt?: string;
+  updatedAt?: string;
 }

@@ -274,6 +274,43 @@ describe("Global Default Provider & Model across Sessions", () => {
     expect(session3.getProvider().name).toBe("OpenAI");
     expect(session3.getProvider().model).toBe("gpt-4o-mini");
   });
+
+  it("persists sessions to disk and lists them via Session.listAll", () => {
+    // 1. Create and save session A
+    const sessA = Session.createNew();
+    sessA.setModel("gpt-4o");
+    sessA.addMessage({ role: "user", content: "Hello A" });
+    sessA.addMessage({ role: "assistant", content: "Hi A" });
+
+    // 2. Create and save session B
+    const sessB = Session.createNew();
+    sessB.setModel("claude-3.5-sonnet");
+    sessB.addMessage({ role: "user", content: "Hello B" });
+
+    // 3. List all saved sessions
+    const all = Session.listAll();
+    const ids = all.map((s) => s.id);
+    expect(ids).toContain(sessA.id);
+    expect(ids).toContain(sessB.id);
+
+    const snapA = all.find((s) => s.id === sessA.id);
+    expect(snapA?.history.length).toBe(2);
+    expect(snapA?.provider.model).toBe("gpt-4o");
+
+    const snapB = all.find((s) => s.id === sessB.id);
+    expect(snapB?.history.length).toBe(1);
+
+    // 4. Load session from disk
+    const loadedA = Session.load(sessA.id);
+    expect(loadedA).not.toBeNull();
+    expect(loadedA?.getHistory().length).toBe(2);
+    expect(loadedA?.getProvider().model).toBe("gpt-4o");
+
+    // 5. Delete session
+    const deleted = Session.delete(sessA.id);
+    expect(deleted).toBe(true);
+    expect(Session.load(sessA.id)).toBeNull();
+  });
 });
 
 describe("Provider Presets", () => {
