@@ -17,23 +17,8 @@ import {
 import { Session } from "./session.ts";
 import { Spinner } from "./ui/spinner.ts";
 
-// Initialize session: restore most recent saved session, or create a new session with global defaults
-const savedList = Session.listAll();
-let activeSession: Session;
-if (savedList.length > 0 && savedList[0]?.id) {
-  activeSession = Session.load(savedList[0].id) || Session.createNew();
-} else {
-  activeSession = Session.createNew();
-}
-
-// Ensure active session provider has its API key decrypted
-const currentProvider = activeSession.getProvider();
-if (!currentProvider.apiKey) {
-  const stored = loadProviderConfig(currentProvider.name);
-  if (stored?.apiKey) {
-    activeSession.setApiKey(stored.apiKey);
-  }
-}
+// Initialize a fresh active session inheriting global default provider & model
+let activeSession = Session.createNew();
 
 const spinner = new Spinner();
 
@@ -494,13 +479,14 @@ export async function runCLI(): Promise<void> {
       console.log(`\x1b[33mWarning: No API key set for ${providerConfig.name}. Use /provider to configure your API key.\x1b[0m\n`);
     }
 
-    // Record user prompt to session immediately so input is persisted
+    // Add user prompt to history and run generator
+    const priorHistory = activeSession.getHistory();
     activeSession.addMessage({ role: "user", content: trimmed });
 
     try {
       const generator = Agent.run(
         trimmed,
-        activeSession.getHistory().slice(0, -1),
+        priorHistory,
         providerConfig,
         {
           systemPrompt: activeSession.getSystemPrompt(),

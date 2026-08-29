@@ -37,7 +37,10 @@ export class Agent {
     // Construct working history payload
     const workingHistory: Message[] = [];
 
-    // Include system prompt if provided
+    // Filter out leading duplicate system prompts from prior history
+    const priorHistory = history.filter((m, i) => !(i === 0 && m.role === "system"));
+
+    // Include single system prompt if provided
     if (options?.systemPrompt) {
       workingHistory.push({
         role: "system",
@@ -46,13 +49,16 @@ export class Agent {
     }
 
     // Add prior session history
-    workingHistory.push(...history);
+    workingHistory.push(...priorHistory);
 
-    // Add the new user query
-    workingHistory.push({
-      role: "user",
-      content: query,
-    });
+    // Add the new user query (avoid consecutive duplicate user prompts)
+    const lastMsg = priorHistory[priorHistory.length - 1];
+    if (!lastMsg || lastMsg.role !== "user" || lastMsg.content !== query) {
+      workingHistory.push({
+        role: "user",
+        content: query,
+      });
+    }
 
     let step = 0;
     let finalResponse = "";
