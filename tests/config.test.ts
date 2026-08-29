@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   getGlobalDefaultProvider,
   getProviderConfigFilePath,
+  getZeroDir,
   loadProviderConfig,
   resetGlobalDefaults,
   saveProviderConfig,
@@ -12,7 +14,7 @@ import {
 import { decrypt, encrypt } from "../src/crypto.ts";
 import type { ProviderConfig } from "../src/types.ts";
 
-const ZERO_DIR = resolve(".zero");
+const TEST_ZERO_DIR = resolve("./.test_sandbox/.zero");
 
 describe("Encryption & Decryption", () => {
   it("encrypts and decrypts sensitive API keys cleanly with AES-256-GCM", () => {
@@ -32,16 +34,29 @@ describe("Encryption & Decryption", () => {
   });
 });
 
-describe("Encrypted Provider Config Storage (.zero/[provider]_config.json)", () => {
+describe("~/.zero Directory Configuration & Encrypted Storage", () => {
+  const originalEnv = process.env.ZERO_CONFIG_DIR;
+
   beforeEach(() => {
+    process.env.ZERO_CONFIG_DIR = TEST_ZERO_DIR;
     resetGlobalDefaults();
   });
 
   afterEach(() => {
     resetGlobalDefaults();
+    if (originalEnv !== undefined) {
+      process.env.ZERO_CONFIG_DIR = originalEnv;
+    } else {
+      delete process.env.ZERO_CONFIG_DIR;
+    }
   });
 
-  it("saves encrypted provider config to ./.zero/[provider]_config.json and decrypts on load", () => {
+  it("defaults to ~/.zero when ZERO_CONFIG_DIR is not set", () => {
+    delete process.env.ZERO_CONFIG_DIR;
+    expect(getZeroDir()).toBe(join(homedir(), ".zero"));
+  });
+
+  it("saves encrypted provider config to ~/.zero/[provider]_config.json and decrypts on load", () => {
     const provider: ProviderConfig = {
       name: "OpenAI",
       baseURL: "https://api.openai.com/v1",
@@ -75,7 +90,7 @@ describe("Encrypted Provider Config Storage (.zero/[provider]_config.json)", () 
     expect(loaded?.apiKey).toBe("sk-proj-supersecretkey999"); // Decrypted accurately
   });
 
-  it("loads multiple distinct provider configs accurately from .zero directory", () => {
+  it("loads multiple distinct provider configs accurately from ~/.zero directory", () => {
     const groq: ProviderConfig = {
       name: "Groq",
       baseURL: "https://api.groq.com/openai/v1",
@@ -107,7 +122,7 @@ describe("Encrypted Provider Config Storage (.zero/[provider]_config.json)", () 
     expect(deepseekLoaded?.model).toBe("deepseek-reasoner");
   });
 
-  it("sets global default provider and restores it from .zero directory", () => {
+  it("sets global default provider and restores it from ~/.zero directory", () => {
     const provider: ProviderConfig = {
       name: "Groq",
       baseURL: "https://api.groq.com/openai/v1",

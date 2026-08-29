@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { decrypt, encrypt } from "./crypto.ts";
 import { getDefaultProvider, getProviderPreset, PROVIDER_PRESETS } from "./providers.ts";
@@ -14,7 +15,12 @@ export interface StoredProviderFile {
   updatedAt: string;
 }
 
-const ZERO_DIR = resolve(".zero");
+/**
+ * Returns the base configuration directory (~/.zero or overridden by ZERO_CONFIG_DIR).
+ */
+export function getZeroDir(): string {
+  return process.env.ZERO_CONFIG_DIR || join(homedir(), ".zero");
+}
 
 /**
  * Normalizes provider name or ID into a clean lowercase filename prefix (e.g. "openai", "groq", "ollama").
@@ -33,24 +39,25 @@ export function normalizeProviderId(nameOrId: string): string {
 }
 
 /**
- * Gets path to the provider config file: ./.zero/[provider]_config.json
+ * Gets path to the provider config file: ~/.zero/[provider]_config.json
  */
 export function getProviderConfigFilePath(providerNameOrId: string): string {
   const id = normalizeProviderId(providerNameOrId);
-  return join(ZERO_DIR, `${id}_config.json`);
+  return join(getZeroDir(), `${id}_config.json`);
 }
 
 /**
- * Ensures the ./.zero directory exists.
+ * Ensures the ~/.zero directory exists.
  */
 function ensureZeroDir(): void {
-  if (!existsSync(ZERO_DIR)) {
-    mkdirSync(ZERO_DIR, { recursive: true });
+  const dir = getZeroDir();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 
 /**
- * Saves a provider configuration to ./.zero/[provider]_config.json with encrypted API key.
+ * Saves a provider configuration to ~/.zero/[provider]_config.json with encrypted API key.
  */
 export function saveProviderConfig(provider: ProviderConfig): void {
   ensureZeroDir();
@@ -77,7 +84,7 @@ export function saveProviderConfig(provider: ProviderConfig): void {
 }
 
 /**
- * Loads a provider configuration from ./.zero/[provider]_config.json and decrypts the API key.
+ * Loads a provider configuration from ~/.zero/[provider]_config.json and decrypts the API key.
  */
 export function loadProviderConfig(providerNameOrId: string): ProviderConfig | null {
   const filePath = getProviderConfigFilePath(providerNameOrId);
@@ -106,23 +113,27 @@ export function loadProviderConfig(providerNameOrId: string): ProviderConfig | n
   }
 }
 
-const DEFAULT_POINTER_FILE = join(ZERO_DIR, "default_config.json");
+function getDefaultPointerFile(): string {
+  return join(getZeroDir(), "default_config.json");
+}
 
 let inMemoryDefaultProvider: ProviderConfig | null = null;
 
 /**
  * Retrieves the global default provider and model across all new sessions.
- * Reads from ./.zero/default_config.json or first saved ./.zero/[provider]_config.json.
+ * Reads from ~/.zero/default_config.json or first saved ~/.zero/[provider]_config.json.
  */
 export function getGlobalDefaultProvider(): ProviderConfig {
   if (inMemoryDefaultProvider) {
     return { ...inMemoryDefaultProvider };
   }
 
-  // 1. Check default pointer file ./.zero/default_config.json
-  if (existsSync(DEFAULT_POINTER_FILE)) {
+  const defaultPointer = getDefaultPointerFile();
+
+  // 1. Check default pointer file ~/.zero/default_config.json
+  if (existsSync(defaultPointer)) {
     try {
-      const raw = readFileSync(DEFAULT_POINTER_FILE, "utf-8");
+      const raw = readFileSync(defaultPointer, "utf-8");
       const ptr = JSON.parse(raw);
       if (ptr.providerId) {
         const loaded = loadProviderConfig(ptr.providerId);
@@ -137,10 +148,11 @@ export function getGlobalDefaultProvider(): ProviderConfig {
     }
   }
 
-  // 2. Check if any ./.zero/*_config.json exists
-  if (existsSync(ZERO_DIR)) {
+  // 2. Check if any ~/.zero/*_config.json exists
+  const dir = getZeroDir();
+  if (existsSync(dir)) {
     try {
-      const files = readdirSync(ZERO_DIR);
+      const files = readdirSync(dir);
       for (const file of files) {
         if (file.endsWith("_config.json") && file !== "default_config.json") {
           const providerId = file.replace(/_config\.json$/, "");
@@ -163,20 +175,20 @@ export function getGlobalDefaultProvider(): ProviderConfig {
 
 /**
  * Sets the global default provider and model across all new sessions.
- * Saves to ./.zero/[provider]_config.json and ./.zero/default_config.json.
+ * Saves to ~/.zero/[provider]_config.json and ~/.zero/default_config.json.
  */
 export function setGlobalDefaultProvider(provider: ProviderConfig, persist = true): void {
   inMemoryDefaultProvider = { ...provider };
 
   if (persist) {
-    // 1. Save provider config with encrypted key to ./.zero/[provider]_config.json
+    // 1. Save provider config with encrypted key to ~/.zero/[provider]_config.json
     saveProviderConfig(provider);
 
-    // 2. Save pointer to ./.zero/default_config.json
+    // 2. Save pointer to ~/.zero/default_config.json
     ensureZeroDir();
     try {
       writeFileSync(
-        DEFAULT_POINTER_FILE,
+        getDefaultPointerFile(),
         JSON.stringify(
           {
             providerId: normalizeProviderId(provider.name),
@@ -204,15 +216,16 @@ export function setGlobalDefaultModel(model: string, persist = true): void {
 }
 
 /**
- * Resets global defaults and removes stored config files.
+ * Resets global defaults and removes stored config files in ~/.zero.
  */
 export function resetGlobalDefaults(): void {
-  inMemoryDefaultProvider = getDefaultProvider();
+  inMemoryDefaultProvider = null;
   try {
-    if (existsSync(ZERO_DIR)) {
-      const files = readdirSync(ZERO_DIR);
+    const dir = getZeroDir();
+    if (existsSync(dir)) {
+      const files = readdirSync(dir);
       for (const file of files) {
-        unlinkSync(join(ZERO_DIR, file));
+        unlinkSync(join(dir, file));
       }
     }
   } catch {

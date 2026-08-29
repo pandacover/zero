@@ -64,7 +64,7 @@ async function handleProviderCommand(rl: ReturnType<typeof createInterface>): Pr
   console.log("\n\x1b[1mSelect a Provider:\x1b[0m");
   PROVIDER_PRESETS.forEach((preset, index) => {
     const stored = loadProviderConfig(preset.id);
-    const hasKey = stored?.apiKey ? " \x1b[32m[Encrypted key saved in ./.zero/]\x1b[0m" : "";
+    const hasKey = stored?.apiKey ? " \x1b[32m[Encrypted key saved in ~/.zero/]\x1b[0m" : "";
     console.log(`  [${index + 1}] \x1b[33m${preset.name}\x1b[0m - ${preset.description}${hasKey}`);
   });
 
@@ -125,12 +125,12 @@ async function handleProviderCommand(rl: ReturnType<typeof createInterface>): Pr
     supportsReasoning: chosenPreset.supportsReasoning,
   };
 
-  // Save encrypted provider config to ./.zero/[provider]_config.json
+  // Save encrypted provider config to ~/.zero/[provider]_config.json
   saveProviderConfig(newConfig);
   activeSession.setProvider(newConfig);
 
   console.log(`\n\x1b[32m✔ Connected active session to ${chosenPreset.name} (Model: ${defaultModel})\x1b[0m`);
-  console.log(`\x1b[90m  Encrypted configuration saved to ./.zero/${chosenPreset.id}_config.json\x1b[0m`);
+  console.log(`\x1b[90m  Encrypted configuration saved to ~/.zero/${chosenPreset.id}_config.json\x1b[0m`);
 
   const setAsDefault = await rl.question("Set this provider as global default for future new sessions? (y/N): ");
   if (setAsDefault.trim().toLowerCase() === "y" || setAsDefault.trim().toLowerCase() === "yes") {
