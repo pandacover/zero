@@ -165,4 +165,45 @@ describe("~/.zero Directory Configuration & Encrypted Storage", () => {
     expect(loaded?.model).toBe("deepseek/deepseek-r1");
     expect(loaded?.apiKey).toBe("sk-or-v1-secretkey123"); // Key was preserved!
   });
+
+  it("never saves API keys into session files and dynamically resolves them from provider config", () => {
+    // 1. Save provider config with encrypted key
+    const provider: ProviderConfig = {
+      name: "OpenAI",
+      baseURL: "https://api.openai.com/v1",
+      apiKey: "sk-openai-session-test-key",
+      model: "gpt-4o",
+      defaultModels: ["gpt-4o"],
+    };
+    saveProviderConfig(provider);
+
+    // 2. Create session with this provider
+    const { Session } = require("../src/session.ts");
+    const session = Session.createNew({ provider });
+    session.addMessage({ role: "user", content: "hello" });
+
+    // 3. Inspect raw JSON file on disk
+    const sessionFilePath = join(getZeroDir(), "sessions", `${session.id}.json`);
+    expect(existsSync(sessionFilePath)).toBe(true);
+
+    const rawSessionJson = readFileSync(sessionFilePath, "utf-8");
+    const parsed = JSON.parse(rawSessionJson);
+
+    // Verify neither apiKey nor encryptedApiKey exists in the session file
+    expect(parsed.provider.apiKey).toBeUndefined();
+    expect(parsed.provider.encryptedApiKey).toBeUndefined();
+    expect(rawSessionJson).not.toContain("sk-openai-session-test-key");
+
+    // 4. Verify Session.load resolves the key dynamically from provider config
+    const loadedSession = Session.load(session.id);
+    expect(loadedSession).not.toBeNull();
+    expect(loadedSession.getProvider().apiKey).toBe("sk-openai-session-test-key");
+
+    // 5. Update provider key in provider config
+    provider.apiKey = "sk-openai-updated-new-key";
+    saveProviderConfig(provider);
+
+    // Session automatically gets updated key without modifying session file
+    expect(loadedSession.getProvider().apiKey).toBe("sk-openai-updated-new-key");
+  });
 });

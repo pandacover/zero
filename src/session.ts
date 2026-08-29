@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getGlobalDefaultProvider, getZeroDir, loadProviderConfig } from "./config.ts";
-import { decrypt, encrypt } from "./crypto.ts";
+import { getGlobalDefaultProvider, getZeroDir, loadProviderConfig, saveProviderConfig } from "./config.ts";
 import { getProviderPreset } from "./providers.ts";
 import { defaultTools } from "./tools.ts";
 import type { Message, ProviderConfig, SessionSnapshot, Tool } from "./types.ts";
@@ -58,14 +57,13 @@ export class Session {
   }
 
   /**
-   * Saves the session to ~/.zero/sessions/[id].json with encrypted API key.
+   * Saves the session to ~/.zero/sessions/[id].json.
+   * Note: API keys (encrypted or not) are NEVER written to session files.
    */
   save(): void {
     ensureSessionsDir();
     this.updatedAt = new Date().toISOString();
     const filePath = join(getSessionsDir(), `${this.id}.json`);
-
-    const encryptedKey = this.provider.apiKey ? encrypt(this.provider.apiKey) : "";
 
     const data = {
       id: this.id,
@@ -75,7 +73,6 @@ export class Session {
         name: this.provider.name,
         baseURL: this.provider.baseURL,
         model: this.provider.model,
-        encryptedApiKey: encryptedKey,
         defaultModels: this.provider.defaultModels,
         supportsReasoning: this.provider.supportsReasoning,
       },
@@ -92,7 +89,8 @@ export class Session {
   }
 
   /**
-   * Loads a saved session from ~/.zero/sessions/[id].json.
+   * Loads a saved session from ~/.zero/sessions/[id].json and always resolves
+   * the API key on demand from ~/.zero/[provider]_config.json.
    */
   static load(id: string): Session | null {
     const filePath = join(getSessionsDir(), `${id}.json`);
@@ -104,25 +102,17 @@ export class Session {
       const raw = readFileSync(filePath, "utf-8");
       const data = JSON.parse(raw);
 
-      // 1. Try to decrypt key directly from session file
-      let decryptedKey = data.provider?.encryptedApiKey ? decrypt(data.provider.encryptedApiKey) : "";
+      // Always resolve decrypted API key directly from ~/.zero/[provider]_config.json
+      const providerName = data.provider?.name || "Custom";
+      const storedProvider = loadProviderConfig(providerName);
+      const preset = getProviderPreset(providerName);
 
-      // 2. If empty, check stored provider config on disk
-      const storedProvider = loadProviderConfig(data.provider?.name || "");
-      if (!decryptedKey && storedProvider?.apiKey) {
-        decryptedKey = storedProvider.apiKey;
-      }
-
-      // 3. If still empty, check preset environment variable
-      const preset = getProviderPreset(data.provider?.name || "");
-      if (!decryptedKey && preset?.apiKeyEnvVar && process.env[preset.apiKeyEnvVar]) {
-        decryptedKey = process.env[preset.apiKeyEnvVar]!;
-      }
+      const apiKey = storedProvider?.apiKey || (preset?.apiKeyEnvVar && process.env[preset.apiKeyEnvVar]) || "";
 
       const provider: ProviderConfig = {
         name: data.provider?.name || storedProvider?.name || preset?.name || "Custom",
         baseURL: data.provider?.baseURL || storedProvider?.baseURL || preset?.defaultBaseURL || "http://localhost:8000/v1",
-        apiKey: decryptedKey,
+        apiKey,
         model: data.provider?.model || storedProvider?.model || preset?.defaultModels[0] || "default-model",
         defaultModels: data.provider?.defaultModels || storedProvider?.defaultModels || preset?.defaultModels || [],
         supportsReasoning: data.provider?.supportsReasoning ?? storedProvider?.supportsReasoning ?? preset?.supportsReasoning ?? false,
@@ -165,7 +155,7 @@ export class Session {
                 provider: {
                   name: data.provider?.name || "Custom",
                   baseURL: data.provider?.baseURL || "http://localhost:8000/v1",
-                  apiKey: "", // Mask in snapshot listing
+                  apiKey: "", // Never expose API keys in snapshot listings
                   model: data.provider?.model || "default-model",
                   defaultModels: data.provider?.defaultModels || [],
                   supportsReasoning: data.provider?.supportsReasoning,
@@ -230,11 +220,27 @@ export class Session {
   }
 
   getProvider(): ProviderConfig {
-    return { ...this.provider };
+    // Always resolve the decrypted API key and base URL directly from ~/.zero/[provider]_config.json
+    const stored = loadProviderConfig(this.provider.name);
+    const preset = getProviderPreset(this.provider.name);
+    const apiKey =
+      stored?.apiKey ||
+      (preset?.apiKeyEnvVar && process.env[preset.apiKeyEnvVar]) ||
+      this.provider.apiKey ||
+      "";
+
+    return {
+      ...this.provider,
+      baseURL: stored?.baseURL || this.provider.baseURL,
+      apiKey,
+    };
   }
 
   setProvider(provider: ProviderConfig): void {
     this.provider = { ...provider };
+    if (provider.apiKey) {
+      saveProviderConfig(provider);
+    }
     this.save();
   }
 
@@ -245,11 +251,13 @@ export class Session {
 
   setApiKey(apiKey: string): void {
     this.provider.apiKey = apiKey;
+    saveProviderConfig(this.provider);
     this.save();
   }
 
   setBaseURL(baseURL: string): void {
     this.provider.baseURL = baseURL;
+    saveProviderConfig(this.provider);
     this.save();
   }
 
