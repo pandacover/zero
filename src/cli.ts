@@ -415,6 +415,10 @@ export async function runCLI(): Promise<void> {
                   : "\x1b[90m[System]\x1b[0m";
               const snippet = (m.content || "").slice(0, 120);
               console.log(`  ${i + 1}. ${roleTag} ${snippet}${snippet.length >= 120 ? "..." : ""}`);
+              if (m.thought) {
+                const thoughtSnippet = m.thought.length > 120 ? m.thought.slice(0, 120) + "..." : m.thought;
+                console.log(`     \x1b[35m[Think]\x1b[0m \x1b[90m${thoughtSnippet.replace(/\n/g, " ")}\x1b[0m`);
+              }
             });
             console.log();
           }
@@ -473,7 +477,8 @@ export async function runCLI(): Promise<void> {
 
           case "think:complete":
             spinner.stop();
-            console.log(`\x1b[90m💭 Thought (${event.durationMs}ms):\n${event.thought}\x1b[0m\n`);
+            console.log(`\x1b[35m🧠 Think (${event.durationMs}ms):\x1b[0m`);
+            console.log(`\x1b[90m${event.thought.trim().replace(/^/gm, "  ")}\x1b[0m\n`);
             break;
 
           case "tool:start": {

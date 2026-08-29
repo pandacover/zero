@@ -115,6 +115,11 @@ describe("Agent Generator & Event Streaming", () => {
 
     const thinkEvent = events.find((e) => e.type === "think:complete") as any;
     expect(thinkEvent.thought).toBe("I should compute 6 times 7.");
+
+    const doneEvent = events.find((e) => e.type === "done") as any;
+    expect(doneEvent.history.length).toBe(2);
+    expect(doneEvent.history[1].thought).toBe("I should compute 6 times 7.");
+    expect(doneEvent.history[1].content).toBe("The answer is 42.");
   });
 
   it("executes tools in a multi-turn loop and emits tool:start and tool:complete events", async () => {

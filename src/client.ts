@@ -81,9 +81,10 @@ export class OpenAICompatibleClient {
 
     const message = choice.message || {};
     let content: string | null = message.content ?? null;
-    let reasoning: string | null = message.reasoning_content ?? null;
+    let reasoning: string | null =
+      message.reasoning_content ?? message.reasoning ?? message.thought ?? null;
 
-    // If reasoning wasn't in reasoning_content, check for <think>...</think> tags in content
+    // If reasoning wasn't in reasoning fields, check for <think>...</think> tags in content
     if (!reasoning && content && content.includes("<think>")) {
       const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/);
       if (thinkMatch && thinkMatch[1]) {

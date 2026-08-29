@@ -95,10 +95,11 @@ export class Agent {
 
         // Check for tool calls
         if (response.tool_calls && response.tool_calls.length > 0) {
-          // Record assistant message with tool calls
+          // Record assistant message with tool calls and thinking trace
           workingHistory.push({
             role: "assistant",
             content: response.content,
+            thought: response.reasoning || undefined,
             tool_calls: response.tool_calls,
           });
 
@@ -165,10 +166,11 @@ export class Agent {
           usage: response.usage,
         };
 
-        // Append assistant's final response to history
+        // Append assistant's final response and thinking trace to history
         workingHistory.push({
           role: "assistant",
           content: finalResponse,
+          thought: response.reasoning || undefined,
         });
 
         const totalDurationMs = Date.now() - totalStart;
