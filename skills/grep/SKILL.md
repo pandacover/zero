@@ -2,6 +2,10 @@
 name: grep
 description: Search for a regex or text pattern across files with line numbers and snippets.
 tool: grep
+when_to_use:
+  - Finding all usages, declarations, or references of a function, class, symbol, or import.
+  - Searching for specific error messages, log strings, or keywords across multiple files.
+  - Locating configuration keys or specific text across the entire codebase.
 parameters:
   pattern:
     type: string

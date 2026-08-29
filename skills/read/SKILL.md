@@ -2,6 +2,10 @@
 name: read
 description: Read content of a file with line numbers, optionally specifying start and end lines.
 tool: read
+when_to_use:
+  - Inspecting source code, configuration files, or documentation.
+  - Reading specific line ranges of large files to understand logic and context.
+  - Verifying exact code structure and surrounding lines before making edits.
 parameters:
   path:
     type: string
