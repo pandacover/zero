@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Agent } from "../src/agent.ts";
 import { OpenAICompatibleClient } from "../src/client.ts";
@@ -319,6 +320,105 @@ describe("Global Default Provider & Model across Sessions", () => {
     const deleted = Session.delete(sessA.id);
     expect(deleted).toBe(true);
     expect(Session.load(sessA.id)).toBeNull();
+  });
+
+  it("stores hierarchical sessions with session.json and [id]_turn_[index].json including thinking and failure steps", () => {
+    const session = Session.createNew();
+
+    // 1. Start turn 1
+    const turn1 = session.startTurn("List all project files and analyze them");
+    expect(turn1.turnIndex).toBe(1);
+    expect(turn1.status).toBe("in_progress");
+
+    // Verify turn file exists: ~/.zero/sessions/[id]/[id]_turn_1.json
+    const turn1Path = session.getTurnFilePath(1);
+    expect(existsSync(turn1Path)).toBe(true);
+
+    // Verify session.json exists: ~/.zero/sessions/[id]/session.json
+    const sessionJsonPath = session.getSessionFilePath();
+    expect(existsSync(sessionJsonPath)).toBe(true);
+
+    // 2. Record think step
+    session.recordTurnStep(1, {
+      type: "think",
+      thought: "I should glob for files first.",
+      durationMs: 450,
+    });
+
+    // 3. Record tool step
+    session.recordTurnStep(1, {
+      type: "tool",
+      toolName: "glob",
+      args: { pattern: "*.ts" },
+      callId: "call_glob_1",
+      result: "src/index.ts, src/agent.ts",
+      durationMs: 120,
+      status: "success",
+    });
+
+    // 4. Record response step
+    session.recordTurnStep(1, {
+      type: "response",
+      content: "Found 2 files: src/index.ts, src/agent.ts.",
+      durationMs: 300,
+    });
+
+    // 5. Complete turn 1 with success
+    session.completeTurn(1, {
+      status: "success",
+      finalResponse: "Found 2 files: src/index.ts, src/agent.ts.",
+      totalDurationMs: 870,
+    });
+
+    // Verify turn 1 content on disk
+    const loadedTurn1 = session.getTurn(1);
+    expect(loadedTurn1).not.toBeNull();
+    expect(loadedTurn1?.status).toBe("success");
+    expect(loadedTurn1?.steps.length).toBe(3);
+    expect(loadedTurn1?.steps[0]?.type).toBe("think");
+    expect(loadedTurn1?.steps[1]?.type).toBe("tool");
+    expect(loadedTurn1?.steps[2]?.type).toBe("response");
+    expect(loadedTurn1?.finalResponse).toBe("Found 2 files: src/index.ts, src/agent.ts.");
+
+    // 6. Start turn 2 (which will fail midway)
+    const turn2 = session.startTurn("Perform an invalid operation");
+    expect(turn2.turnIndex).toBe(2);
+
+    session.recordTurnStep(2, {
+      type: "think",
+      thought: "Attempting to execute requested action...",
+      durationMs: 200,
+    });
+
+    // Record failure step
+    session.recordTurnStep(2, {
+      type: "error",
+      message: "API rate limit exceeded (429)",
+      phase: "model",
+    });
+
+    session.completeTurn(2, {
+      status: "error",
+      error: { message: "API rate limit exceeded (429)", phase: "model" },
+      totalDurationMs: 350,
+    });
+
+    // Verify turn 2 records the failure and steps on disk
+    const loadedTurn2 = session.getTurn(2);
+    expect(loadedTurn2).not.toBeNull();
+    expect(loadedTurn2?.status).toBe("error");
+    expect(loadedTurn2?.error?.message).toBe("API rate limit exceeded (429)");
+    expect(loadedTurn2?.steps.length).toBe(2);
+    expect(loadedTurn2?.steps[1]?.type).toBe("error");
+
+    // Verify getTurns returns both turns
+    const allTurns = session.getTurns();
+    expect(allTurns.length).toBe(2);
+    expect(allTurns[0]?.turnIndex).toBe(1);
+    expect(allTurns[1]?.turnIndex).toBe(2);
+
+    // Clean up
+    Session.delete(session.id);
   });
 });
 

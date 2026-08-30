@@ -87,6 +87,34 @@ export interface SessionSnapshot {
   systemPrompt: string;
   history: Message[];
   toolNames: string[];
+  turnsCount?: number;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export type TurnStep =
+  | { type: "think"; thought: string; durationMs: number }
+  | {
+      type: "tool";
+      toolName: string;
+      args: Record<string, any>;
+      callId: string;
+      result: string;
+      durationMs: number;
+      status: "success" | "error";
+    }
+  | { type: "response"; content: string; durationMs: number; usage?: TokenUsage }
+  | { type: "error"; message: string; phase: "think" | "tool" | "response" | "model" };
+
+export interface TurnRecord {
+  turnIndex: number;
+  sessionId: string;
+  startedAt: string;
+  completedAt?: string;
+  userPrompt: string;
+  status: "in_progress" | "success" | "error";
+  steps: TurnStep[];
+  error?: { message: string; phase: string };
+  finalResponse?: string;
+  totalDurationMs?: number;
 }

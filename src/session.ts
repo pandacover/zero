@@ -1,19 +1,34 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { getGlobalDefaultProvider, getZeroDir, loadProviderConfig, saveProviderConfig } from "./config.ts";
 import { getProviderPreset } from "./providers.ts";
 import { defaultTools } from "./tools.ts";
-import type { Message, ProviderConfig, SessionSnapshot, Tool } from "./types.ts";
+import type {
+  Message,
+  ProviderConfig,
+  SessionSnapshot,
+  Tool,
+  TurnRecord,
+  TurnStep,
+} from "./types.ts";
 
 export const DEFAULT_SYSTEM_PROMPT =
   "use browse_skills for if you think the request requires any particular skill or tool";
 
-function getSessionsDir(): string {
+function getSessionsBaseDir(): string {
   return join(getZeroDir(), "sessions");
 }
 
-function ensureSessionsDir(): void {
-  const dir = getSessionsDir();
+function ensureSessionsBaseDir(): void {
+  const dir = getSessionsBaseDir();
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
@@ -27,6 +42,8 @@ export class Session {
   private provider: ProviderConfig;
   private systemPrompt: string;
   private tools: Tool[];
+  private turnsCount: number = 0;
+  private activeTurn: TurnRecord | null = null;
 
   constructor(options?: {
     id?: string;
@@ -34,17 +51,20 @@ export class Session {
     systemPrompt?: string;
     tools?: Tool[];
     initialHistory?: Message[];
+    turnsCount?: number;
     createdAt?: string;
     updatedAt?: string;
   }) {
-    this.id = options?.id ?? `session_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+    this.id =
+      options?.id ??
+      `session_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
     this.createdAt = options?.createdAt ?? new Date().toISOString();
     this.updatedAt = options?.updatedAt ?? this.createdAt;
-    // If specific provider is passed, use that; otherwise copy from global default
     this.provider = options?.provider ? { ...options.provider } : getGlobalDefaultProvider();
     this.systemPrompt = options?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.tools = options?.tools ? [...options.tools] : [...defaultTools];
     this.history = options?.initialHistory ? [...options.initialHistory] : [];
+    this.turnsCount = options?.turnsCount ?? 0;
   }
 
   /**
@@ -57,13 +77,45 @@ export class Session {
   }
 
   /**
-   * Saves the session to ~/.zero/sessions/[id].json.
-   * Note: API keys (encrypted or not) are NEVER written to session files.
+   * Returns the directory for this session: ~/.zero/sessions/[id]/
+   */
+  getSessionDir(): string {
+    return join(getSessionsBaseDir(), this.id);
+  }
+
+  /**
+   * Returns path to main session file: ~/.zero/sessions/[id]/session.json
+   */
+  getSessionFilePath(): string {
+    return join(this.getSessionDir(), "session.json");
+  }
+
+  /**
+   * Returns path to a specific turn file: ~/.zero/sessions/[id]/[id]_turn_[turnIndex].json
+   */
+  getTurnFilePath(turnIndex: number): string {
+    return join(this.getSessionDir(), `${this.id}_turn_${turnIndex}.json`);
+  }
+
+  /**
+   * Ensures the session directory exists.
+   */
+  private ensureSessionDir(): void {
+    ensureSessionsBaseDir();
+    const dir = this.getSessionDir();
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+  }
+
+  /**
+   * Saves overall session metadata to ~/.zero/sessions/[id]/session.json.
+   * Note: API keys are NEVER written to session files.
    */
   save(): void {
-    ensureSessionsDir();
+    this.ensureSessionDir();
     this.updatedAt = new Date().toISOString();
-    const filePath = join(getSessionsDir(), `${this.id}.json`);
+    const filePath = this.getSessionFilePath();
 
     const data = {
       id: this.id,
@@ -77,6 +129,7 @@ export class Session {
         supportsReasoning: this.provider.supportsReasoning,
       },
       systemPrompt: this.systemPrompt,
+      turnsCount: this.turnsCount,
       history: this.history,
       toolNames: this.tools.map((t) => t.name),
     };
@@ -89,17 +142,167 @@ export class Session {
   }
 
   /**
-   * Loads a saved session from ~/.zero/sessions/[id].json and always resolves
-   * the API key on demand from ~/.zero/[provider]_config.json.
+   * Starts a new turn, initializes its turn file (~/.zero/sessions/[id]/[id]_turn_[turnIndex].json)
+   * and saves the initial in-progress state.
    */
-  static load(id: string): Session | null {
-    const filePath = join(getSessionsDir(), `${id}.json`);
+  startTurn(userPrompt: string): TurnRecord {
+    this.ensureSessionDir();
+    this.turnsCount++;
+
+    const turn: TurnRecord = {
+      turnIndex: this.turnsCount,
+      sessionId: this.id,
+      startedAt: new Date().toISOString(),
+      userPrompt,
+      status: "in_progress",
+      steps: [],
+    };
+
+    this.activeTurn = turn;
+    this.writeTurnFile(turn);
+    this.save();
+
+    return turn;
+  }
+
+  /**
+   * Records a granular step (think, tool execution, response, error) into the active turn file in real time.
+   */
+  recordTurnStep(turnIndex: number, step: TurnStep): void {
+    let turn = this.activeTurn && this.activeTurn.turnIndex === turnIndex ? this.activeTurn : this.getTurn(turnIndex);
+    if (!turn) {
+      turn = {
+        turnIndex,
+        sessionId: this.id,
+        startedAt: new Date().toISOString(),
+        userPrompt: "",
+        status: "in_progress",
+        steps: [],
+      };
+    }
+
+    turn.steps.push(step);
+    this.activeTurn = turn;
+    this.writeTurnFile(turn);
+  }
+
+  /**
+   * Finalizes a turn with its completion status, total duration, and optional error details.
+   */
+  completeTurn(
+    turnIndex: number,
+    result: {
+      status: "success" | "error";
+      finalResponse?: string;
+      error?: { message: string; phase: string };
+      totalDurationMs?: number;
+    }
+  ): void {
+    let turn = this.activeTurn && this.activeTurn.turnIndex === turnIndex ? this.activeTurn : this.getTurn(turnIndex);
+    if (!turn) {
+      turn = {
+        turnIndex,
+        sessionId: this.id,
+        startedAt: new Date().toISOString(),
+        userPrompt: "",
+        status: result.status,
+        steps: [],
+      };
+    }
+
+    turn.completedAt = new Date().toISOString();
+    turn.status = result.status;
+    turn.finalResponse = result.finalResponse;
+    turn.error = result.error;
+    turn.totalDurationMs = result.totalDurationMs;
+
+    this.activeTurn = null;
+    this.writeTurnFile(turn);
+    this.save();
+  }
+
+  /**
+   * Writes a turn record to ~/.zero/sessions/[id]/[id]_turn_[turnIndex].json.
+   */
+  private writeTurnFile(turn: TurnRecord): void {
+    this.ensureSessionDir();
+    const filePath = this.getTurnFilePath(turn.turnIndex);
+    try {
+      writeFileSync(filePath, JSON.stringify(turn, null, 2), "utf-8");
+    } catch {
+      // Ignore write errors in restricted environments
+    }
+  }
+
+  /**
+   * Reads a specific turn record by index.
+   */
+  getTurn(turnIndex: number): TurnRecord | null {
+    const filePath = this.getTurnFilePath(turnIndex);
     if (!existsSync(filePath)) {
       return null;
     }
 
     try {
       const raw = readFileSync(filePath, "utf-8");
+      return JSON.parse(raw) as TurnRecord;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Returns all recorded turns for this session, sorted by turnIndex ascending.
+   */
+  getTurns(): TurnRecord[] {
+    const dir = this.getSessionDir();
+    if (!existsSync(dir)) {
+      return [];
+    }
+
+    const turns: TurnRecord[] = [];
+    try {
+      const files = readdirSync(dir);
+      for (const file of files) {
+        if (file.includes("_turn_") && file.endsWith(".json")) {
+          const filePath = join(dir, file);
+          try {
+            const raw = readFileSync(filePath, "utf-8");
+            const data = JSON.parse(raw) as TurnRecord;
+            if (data && typeof data.turnIndex === "number") {
+              turns.push(data);
+            }
+          } catch {
+            // Ignore malformed turn file
+          }
+        }
+      }
+    } catch {
+      return [];
+    }
+
+    return turns.sort((a, b) => a.turnIndex - b.turnIndex);
+  }
+
+  /**
+   * Loads a saved session from ~/.zero/sessions/[id]/session.json (or legacy ~/.zero/sessions/[id].json).
+   */
+  static load(id: string): Session | null {
+    const baseDir = getSessionsBaseDir();
+    const directorySessionFile = join(baseDir, id, "session.json");
+    const legacyFlatFile = join(baseDir, `${id}.json`);
+
+    let targetFilePath = "";
+    if (existsSync(directorySessionFile)) {
+      targetFilePath = directorySessionFile;
+    } else if (existsSync(legacyFlatFile)) {
+      targetFilePath = legacyFlatFile;
+    } else {
+      return null;
+    }
+
+    try {
+      const raw = readFileSync(targetFilePath, "utf-8");
       const data = JSON.parse(raw);
 
       // Always resolve decrypted API key directly from ~/.zero/[provider]_config.json
@@ -111,21 +314,32 @@ export class Session {
 
       const provider: ProviderConfig = {
         name: data.provider?.name || storedProvider?.name || preset?.name || "Custom",
-        baseURL: data.provider?.baseURL || storedProvider?.baseURL || preset?.defaultBaseURL || "http://localhost:8000/v1",
+        baseURL:
+          data.provider?.baseURL ||
+          storedProvider?.baseURL ||
+          preset?.defaultBaseURL ||
+          "http://localhost:8000/v1",
         apiKey,
         model: data.provider?.model || storedProvider?.model || preset?.defaultModels[0] || "default-model",
         defaultModels: data.provider?.defaultModels || storedProvider?.defaultModels || preset?.defaultModels || [],
-        supportsReasoning: data.provider?.supportsReasoning ?? storedProvider?.supportsReasoning ?? preset?.supportsReasoning ?? false,
+        supportsReasoning:
+          data.provider?.supportsReasoning ??
+          storedProvider?.supportsReasoning ??
+          preset?.supportsReasoning ??
+          false,
       };
 
-      return new Session({
+      const session = new Session({
         id: data.id,
         provider,
         systemPrompt: data.systemPrompt,
         initialHistory: data.history || [],
+        turnsCount: data.turnsCount || 0,
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
       });
+
+      return session;
     } catch {
       return null;
     }
@@ -135,19 +349,30 @@ export class Session {
    * Lists all saved sessions from ~/.zero/sessions/ ordered by most recently updated first.
    */
   static listAll(): SessionSnapshot[] {
-    const dir = getSessionsDir();
-    if (!existsSync(dir)) {
+    const baseDir = getSessionsBaseDir();
+    if (!existsSync(baseDir)) {
       return [];
     }
 
     const results: SessionSnapshot[] = [];
     try {
-      const files = readdirSync(dir);
-      for (const file of files) {
-        if (file.endsWith(".json")) {
-          const filePath = join(dir, file);
+      const entries = readdirSync(baseDir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        let sessionFilePath = "";
+
+        if (entry.isDirectory()) {
+          const candidate = join(baseDir, entry.name, "session.json");
+          if (existsSync(candidate)) {
+            sessionFilePath = candidate;
+          }
+        } else if (entry.isFile() && entry.name.endsWith(".json")) {
+          sessionFilePath = join(baseDir, entry.name);
+        }
+
+        if (sessionFilePath) {
           try {
-            const raw = readFileSync(filePath, "utf-8");
+            const raw = readFileSync(sessionFilePath, "utf-8");
             const data = JSON.parse(raw);
             if (data.id) {
               results.push({
@@ -163,6 +388,7 @@ export class Session {
                 systemPrompt: data.systemPrompt,
                 history: data.history || [],
                 toolNames: data.toolNames || [],
+                turnsCount: data.turnsCount || 0,
                 createdAt: data.createdAt,
                 updatedAt: data.updatedAt,
               });
@@ -185,19 +411,33 @@ export class Session {
   }
 
   /**
-   * Deletes a session file from ~/.zero/sessions/[id].json.
+   * Deletes a session directory (~/.zero/sessions/[id]/) or legacy file (~/.zero/sessions/[id].json).
    */
   static delete(id: string): boolean {
-    const filePath = join(getSessionsDir(), `${id}.json`);
-    if (existsSync(filePath)) {
+    const baseDir = getSessionsBaseDir();
+    const sessionDir = join(baseDir, id);
+    const legacyFile = join(baseDir, `${id}.json`);
+
+    let deleted = false;
+    if (existsSync(sessionDir)) {
       try {
-        unlinkSync(filePath);
-        return true;
+        rmSync(sessionDir, { recursive: true, force: true });
+        deleted = true;
       } catch {
-        return false;
+        // Ignore
       }
     }
-    return false;
+
+    if (existsSync(legacyFile)) {
+      try {
+        unlinkSync(legacyFile);
+        deleted = true;
+      } catch {
+        // Ignore
+      }
+    }
+
+    return deleted;
   }
 
   getHistory(): Message[] {
@@ -278,6 +518,10 @@ export class Session {
     this.tools = [...tools];
   }
 
+  getTurnsCount(): number {
+    return this.turnsCount;
+  }
+
   getSnapshot(): SessionSnapshot {
     return {
       id: this.id,
@@ -285,6 +529,7 @@ export class Session {
       systemPrompt: this.systemPrompt,
       history: this.getHistory(),
       toolNames: this.tools.map((t) => t.name),
+      turnsCount: this.turnsCount,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };

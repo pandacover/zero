@@ -183,7 +183,7 @@ describe("~/.zero Directory Configuration & Encrypted Storage", () => {
     session.addMessage({ role: "user", content: "hello" });
 
     // 3. Inspect raw JSON file on disk
-    const sessionFilePath = join(getZeroDir(), "sessions", `${session.id}.json`);
+    const sessionFilePath = join(getZeroDir(), "sessions", session.id, "session.json");
     expect(existsSync(sessionFilePath)).toBe(true);
 
     const rawSessionJson = readFileSync(sessionFilePath, "utf-8");

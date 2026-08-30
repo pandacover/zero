@@ -479,9 +479,10 @@ export async function runCLI(): Promise<void> {
       console.log(`\x1b[33mWarning: No API key set for ${providerConfig.name}. Use /provider to configure your API key.\x1b[0m\n`);
     }
 
-    // Add user prompt to history and run generator
+    // Add user prompt to history and initialize turn record
     const priorHistory = activeSession.getHistory();
     activeSession.addMessage({ role: "user", content: trimmed });
+    const turn = activeSession.startTurn(trimmed);
 
     try {
       const generator = Agent.run(
@@ -504,6 +505,11 @@ export async function runCLI(): Promise<void> {
             spinner.stop();
             console.log(`\x1b[35m🧠 Think (${event.durationMs}ms):\x1b[0m`);
             console.log(`\x1b[90m${event.thought.trim().replace(/^/gm, "  ")}\x1b[0m\n`);
+            activeSession.recordTurnStep(turn.turnIndex, {
+              type: "think",
+              thought: event.thought,
+              durationMs: event.durationMs,
+            });
             break;
 
           case "tool:start": {
@@ -518,6 +524,15 @@ export async function runCLI(): Promise<void> {
             spinner.succeed(`[${event.toolName}] completed (${event.durationMs}ms)`);
             const snippet = event.result.length > 200 ? event.result.slice(0, 200) + "..." : event.result;
             console.log(`\x1b[90m  Result: ${snippet.replace(/\n/g, "\n  ")}\x1b[0m\n`);
+            activeSession.recordTurnStep(turn.turnIndex, {
+              type: "tool",
+              toolName: event.toolName,
+              args: event.args,
+              callId: event.callId,
+              result: event.result,
+              durationMs: event.durationMs,
+              status: "success",
+            });
             break;
           }
 
@@ -528,21 +543,53 @@ export async function runCLI(): Promise<void> {
           case "response:complete":
             spinner.stop();
             console.log(`\n\x1b[1m\x1b[32mAgent:\x1b[0m\n${event.content}\n`);
+            activeSession.recordTurnStep(turn.turnIndex, {
+              type: "response",
+              content: event.content,
+              durationMs: event.durationMs,
+              usage: event.usage,
+            });
             break;
 
           case "done":
             activeSession.setHistory(event.history);
+            activeSession.completeTurn(turn.turnIndex, {
+              status: "success",
+              finalResponse: event.finalResponse,
+              totalDurationMs: event.totalDurationMs,
+            });
             break;
 
           case "error":
             spinner.fail(`Error (${event.phase}): ${event.message}`);
             console.log();
+            activeSession.recordTurnStep(turn.turnIndex, {
+              type: "error",
+              message: event.message,
+              phase: event.phase,
+            });
+            activeSession.completeTurn(turn.turnIndex, {
+              status: "error",
+              error: { message: event.message, phase: event.phase },
+            });
             break;
         }
       }
     } catch (err: any) {
       spinner.stop();
       console.log(`\x1b[31mExecution failed: ${err.message || String(err)}\x1b[0m\n`);
+      const existingTurn = activeSession.getTurn(turn.turnIndex);
+      if (existingTurn && existingTurn.status === "in_progress") {
+        activeSession.recordTurnStep(turn.turnIndex, {
+          type: "error",
+          message: err.message || String(err),
+          phase: "response",
+        });
+        activeSession.completeTurn(turn.turnIndex, {
+          status: "error",
+          error: { message: err.message || String(err), phase: "response" },
+        });
+      }
     }
   }
 }
