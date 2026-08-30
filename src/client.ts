@@ -28,6 +28,9 @@ export class OpenAICompatibleClient {
         role: m.role,
         content: m.content ?? "",
       };
+      if (m.thought) {
+        msg.reasoning_content = m.thought;
+      }
       if (m.tool_call_id) {
         msg.tool_call_id = m.tool_call_id;
       }

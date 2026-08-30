@@ -175,6 +175,48 @@ describe("Agent Generator & Event Streaming", () => {
     const turn2Payload = mockClient.receivedPayloads[1]!;
     expect(turn2Payload.some((m) => m.role === "tool" && m.tool_call_id === "call_123")).toBe(true);
   });
+
+  it("preserves and sends reasoning_content on assistant messages in multi-turn payloads", async () => {
+    const mockClient = new TestLLMClient();
+
+    // Turn 1: Model reasons and makes a tool call
+    mockClient.enqueue({
+      content: null,
+      reasoning: "Let me check the files first before making changes.",
+      tool_calls: [
+        {
+          id: "call_abc",
+          type: "function",
+          function: {
+            name: "glob",
+            arguments: JSON.stringify({ pattern: "*.ts" }),
+          },
+        },
+      ],
+    });
+
+    // Turn 2: Model finishes
+    mockClient.enqueue({
+      content: "All TypeScript files checked.",
+      reasoning: "Everything looks good.",
+    });
+
+    const events: AgentEvent[] = [];
+    const generator = Agent.run("Check ts files", [], dummyConfig, {
+      client: mockClient,
+      tools: defaultTools,
+    });
+
+    for await (const event of generator) {
+      events.push(event);
+    }
+
+    expect(mockClient.receivedPayloads.length).toBe(2);
+    const turn2Payload = mockClient.receivedPayloads[1]!;
+    const assistantMsg = turn2Payload.find((m) => m.role === "assistant" && m.tool_calls);
+    expect(assistantMsg).toBeDefined();
+    expect(assistantMsg?.thought).toBe("Let me check the files first before making changes.");
+  });
 });
 
 describe("Session Management & Detachment", () => {
