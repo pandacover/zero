@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   browseSkillsTool,
@@ -187,5 +187,51 @@ describe("Coding Tools", () => {
       "write",
       "edit",
     ]);
+  });
+
+  it("returns proper errors and directions when tools are misused", async () => {
+    // 1. Calling read on a directory -> suggests glob
+    mkdirSync(TEST_DIR, { recursive: true });
+    const dirRes = await readTool.execute({ path: TEST_DIR });
+    expect(dirRes).toContain("is a directory, not a file");
+    expect(dirRes).toContain("Suggestion: Use the 'glob' tool");
+
+    // 2. Calling read on non-existent file -> suggests glob
+    const missingFileRes = await readTool.execute({ path: `${TEST_DIR}/missing.txt` });
+    expect(missingFileRes).toContain("does not exist");
+    expect(missingFileRes).toContain("Suggestion: Use the 'glob' tool");
+
+    // 3. Calling edit on non-existent file -> suggests write
+    const editMissingRes = await editTool.execute({
+      path: `${TEST_DIR}/nonexistent.txt`,
+      oldString: "a",
+      newString: "b",
+    });
+    expect(editMissingRes).toContain("use the 'write' tool instead");
+
+    // 4. Calling edit with unmatched string -> suggests read
+    await writeTool.execute({ path: `${TEST_DIR}/sample.txt`, content: "hello world" });
+    const editUnmatchedRes = await editTool.execute({
+      path: `${TEST_DIR}/sample.txt`,
+      oldString: "goodbye",
+      newString: "bye",
+    });
+    expect(editUnmatchedRes).toContain("oldString was not found");
+    expect(editUnmatchedRes).toContain("Suggestion: Use the 'read' tool");
+
+    // 5. Calling glob on a file instead of directory -> suggests read
+    const globFileRes = await globTool.execute({
+      pattern: "*.txt",
+      path: `${TEST_DIR}/sample.txt`,
+    });
+    expect(globFileRes).toContain("is a file, not a directory");
+    expect(globFileRes).toContain("Suggestion: Use the 'read' tool");
+
+    // 6. Calling unrecognized tool name in registry -> suggests valid tools
+    const registry = new ToolRegistry(defaultTools);
+    const unrecRes = await registry.execute("list_files", { dir: "." });
+    expect(unrecRes).toContain("Tool 'list_files' is not recognized");
+    expect(unrecRes).toContain("Available tools: browse_skills, glob, grep, read, write, edit");
+    expect(unrecRes).toContain("Suggestion: If you want to list/discover files, use 'glob'");
   });
 });

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import type { Tool } from "./types.ts";
 
 /**
@@ -8,13 +8,15 @@ import type { Tool } from "./types.ts";
  */
 export const browseSkillsTool: Tool = {
   name: "browse_skills",
-  description: "List all skills and tools along with their YAML front-matter (name, description, parameters, and metadata) to discover available capabilities.",
+  description:
+    "List all skills and tools along with their YAML front-matter (name, description, parameters, and metadata) to discover available capabilities.",
   parameters: {
     type: "object",
     properties: {
       skillName: {
         type: "string",
-        description: "Optional skill name to inspect a specific skill (e.g., 'glob', 'grep', 'read', 'write', 'edit'). If omitted, lists all skills.",
+        description:
+          "Optional skill name to inspect a specific skill (e.g., 'glob', 'grep', 'read', 'write', 'edit'). If omitted, lists all skills.",
       },
     },
   },
@@ -63,8 +65,8 @@ export const browseSkillsTool: Tool = {
 
     if (results.length === 0) {
       return requestedSkill
-        ? `Skill '${requestedSkill}' was not found in skills directories.`
-        : "No skills found under workspace or ~/.zero/skills directory.";
+        ? `Error: Skill '${requestedSkill}' was not found. Suggestion: Call 'browse_skills' with no arguments to list all available tools (glob, grep, read, write, edit) and skills.`
+        : "No skills found under workspace or ~/.zero/skills directory. Available built-in tools are: glob, grep, read, write, edit.";
     }
 
     return `## Available Skills (${results.length} found):\n\n` + results.join("\n\n");
@@ -93,17 +95,25 @@ export const globTool: Tool = {
   },
   execute: async (args: Record<string, any>): Promise<string> => {
     const pattern = String(args.pattern || "*.*");
-    const cwd = resolve(String(args.path || "."));
+    const targetPath = resolve(String(args.path || "."));
 
-    if (!existsSync(cwd)) {
-      return `Error: Directory '${cwd}' does not exist.`;
+    if (!existsSync(targetPath)) {
+      const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
+      return `Error: Directory '${rel}' does not exist. Suggestion: Use glob({ pattern: "**/*" }) without a custom path to search from the workspace root, or check parent directories.`;
     }
 
     try {
+      const stats = statSync(targetPath);
+      if (stats.isFile()) {
+        const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/");
+        const parentDir = dirname(rel) || ".";
+        return `Error: Path '${rel}' is a file, not a directory. Suggestion: Use the 'read' tool to view this file (read({ path: "${rel}" })), or search its directory with glob({ pattern: "${pattern}", path: "${parentDir}" }).`;
+      }
+
       const glob = new Bun.Glob(pattern);
       const matches: string[] = [];
 
-      for (const file of glob.scanSync({ cwd, onlyFiles: false })) {
+      for (const file of glob.scanSync({ cwd: targetPath, onlyFiles: false })) {
         matches.push(file.replace(/\\/g, "/"));
         if (matches.length >= 200) {
           matches.push("... (results capped at 200 matches)");
@@ -112,12 +122,14 @@ export const globTool: Tool = {
       }
 
       if (matches.length === 0) {
-        return `No files matched pattern '${pattern}' in '${cwd}'.`;
+        const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
+        return `No files matched pattern '${pattern}' in '${rel}'. Suggestion: Try a broader pattern like '**/*' or search for text contents across files using the 'grep' tool.`;
       }
 
-      return `Found ${matches.length} matches for '${pattern}' in '${cwd}':\n${matches.join("\n")}`;
+      const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
+      return `Found ${matches.length} matches for '${pattern}' in '${rel}':\n${matches.join("\n")}`;
     } catch (err: any) {
-      return `Error scanning glob '${pattern}': ${err.message || String(err)}`;
+      return `Error scanning glob '${pattern}': ${err.message || String(err)}. Suggestion: Check if the pattern is valid glob syntax or use 'grep' to search content.`;
     }
   },
 };
@@ -156,8 +168,13 @@ export const grepTool: Tool = {
     const includePattern = args.include ? String(args.include) : null;
     const caseSensitive = Boolean(args.caseSensitive);
 
+    if (!pattern) {
+      return `Error: 'pattern' parameter is required for grep. Suggestion: Provide a keyword or regex pattern to search, e.g. grep({ pattern: "functionName" }).`;
+    }
+
     if (!existsSync(targetPath)) {
-      return `Error: Path '${targetPath}' does not exist.`;
+      const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
+      return `Error: Path '${rel}' does not exist. Suggestion: Use 'glob' to discover valid directory paths or search from workspace root with grep({ pattern: "${pattern}", path: "." }).`;
     }
 
     try {
@@ -206,13 +223,14 @@ export const grepTool: Tool = {
         }
       }
 
+      const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
       if (results.length === 0) {
-        return `No matches found for '${pattern}' in '${targetPath}'.`;
+        return `No matches found for '${pattern}' in '${rel}'. Suggestion: Try case-insensitive search (caseSensitive: false), simplify the regex/pattern, or use 'glob' to find files and 'read' to inspect them.`;
       }
 
-      return `Found ${results.length} matches for '${pattern}':\n${results.join("\n")}`;
+      return `Found ${results.length} matches for '${pattern}' in '${rel}':\n${results.join("\n")}`;
     } catch (err: any) {
-      return `Error in grep: ${err.message || String(err)}`;
+      return `Error in grep '${pattern}': ${err.message || String(err)}. Suggestion: If pattern is a complex regex, try a simpler literal string or verify regex escape characters.`;
     }
   },
 };
@@ -242,21 +260,37 @@ export const readTool: Tool = {
     required: ["path"],
   },
   execute: async (args: Record<string, any>): Promise<string> => {
-    const filePath = resolve(String(args.path || ""));
+    const rawPath = String(args.path || "").trim();
+    if (!rawPath) {
+      return "Error: 'path' parameter is required for the read tool. Suggestion: Provide a file path, e.g. read({ path: 'src/index.ts' }).";
+    }
+
+    const filePath = resolve(rawPath);
+    const relPath = relative(process.cwd(), filePath).replace(/\\/g, "/") || rawPath;
 
     if (!existsSync(filePath)) {
-      return `Error: File '${filePath}' does not exist.`;
+      const fileBase = basename(filePath);
+      return `Error: File '${relPath}' does not exist. Suggestion: Use the 'glob' tool (e.g. glob({ pattern: "**/*${fileBase}*" }) or glob({ pattern: "**/*" })) to find the correct file path.`;
     }
 
     try {
+      const stats = statSync(filePath);
+      if (stats.isDirectory()) {
+        return `Error: '${relPath}' is a directory, not a file. The 'read' tool can only read files. Suggestion: Use the 'glob' tool to inspect directory contents (e.g. glob({ pattern: "**/*", path: "${relPath}" })).`;
+      }
+
       const content = await Bun.file(filePath).text();
       const lines = content.split(/\r?\n/);
+
+      if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) {
+        return `[File: ${relPath} is empty (0 lines)]`;
+      }
 
       const start = args.startLine ? Math.max(1, Math.floor(Number(args.startLine))) : 1;
       const end = args.endLine ? Math.min(lines.length, Math.floor(Number(args.endLine))) : lines.length;
 
       if (start > lines.length) {
-        return `Error: startLine ${start} exceeds total lines (${lines.length}) in file '${filePath}'.`;
+        return `Error: startLine ${start} exceeds total lines (${lines.length}) in '${relPath}'. Suggestion: Read lines 1-${Math.min(lines.length, 100)} instead.`;
       }
 
       const formattedLines: string[] = [];
@@ -265,10 +299,9 @@ export const readTool: Tool = {
         formattedLines.push(`${lineNum} | ${lines[i - 1]}`);
       }
 
-      const relPath = relative(process.cwd(), filePath).replace(/\\/g, "/");
       return `[File: ${relPath} (Lines ${start}-${end} of ${lines.length})]\n` + formattedLines.join("\n");
     } catch (err: any) {
-      return `Error reading file '${filePath}': ${err.message || String(err)}`;
+      return `Error reading file '${relPath}': ${err.message || String(err)}. Suggestion: Check permissions or verify if the file is binary.`;
     }
   },
 };
@@ -278,7 +311,8 @@ export const readTool: Tool = {
  */
 export const writeTool: Tool = {
   name: "write",
-  description: "Create or completely overwrite a file with specified content. Creates directories automatically.",
+  description:
+    "Create or completely overwrite a file with specified content. Creates directories automatically.",
   parameters: {
     type: "object",
     properties: {
@@ -294,20 +328,32 @@ export const writeTool: Tool = {
     required: ["path", "content"],
   },
   execute: async (args: Record<string, any>): Promise<string> => {
-    const filePath = resolve(String(args.path || ""));
+    const rawPath = String(args.path || "").trim();
+    if (!rawPath) {
+      return "Error: 'path' parameter is required for the write tool. Suggestion: Provide a file path, e.g. write({ path: 'src/app.ts', content: '...' }).";
+    }
+
+    const filePath = resolve(rawPath);
+    const relPath = relative(process.cwd(), filePath).replace(/\\/g, "/") || rawPath;
     const content = String(args.content ?? "");
 
     try {
+      if (existsSync(filePath)) {
+        const stats = statSync(filePath);
+        if (stats.isDirectory()) {
+          return `Error: Cannot write to '${relPath}' because it is an existing directory. Suggestion: Specify a filename inside this directory, e.g. write({ path: "${relPath}/filename.ext", content: "..." }).`;
+        }
+      }
+
       const dir = dirname(filePath);
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
       }
 
       const bytes = await Bun.write(filePath, content);
-      const relPath = relative(process.cwd(), filePath).replace(/\\/g, "/");
       return `Successfully wrote ${bytes} bytes to '${relPath}'.`;
     } catch (err: any) {
-      return `Error writing file '${filePath}': ${err.message || String(err)}`;
+      return `Error writing file '${relPath}': ${err.message || String(err)}. Suggestion: Verify file permissions and path validity.`;
     }
   },
 };
@@ -337,34 +383,44 @@ export const editTool: Tool = {
     required: ["path", "oldString", "newString"],
   },
   execute: async (args: Record<string, any>): Promise<string> => {
-    const filePath = resolve(String(args.path || ""));
+    const rawPath = String(args.path || "").trim();
+    if (!rawPath) {
+      return "Error: 'path' parameter is required for the edit tool. Suggestion: Provide a file path, e.g. edit({ path: 'src/index.ts', oldString: '...', newString: '...' }).";
+    }
+
+    const filePath = resolve(rawPath);
+    const relPath = relative(process.cwd(), filePath).replace(/\\/g, "/") || rawPath;
     const oldString = String(args.oldString ?? "");
     const newString = String(args.newString ?? "");
 
     if (!existsSync(filePath)) {
-      return `Error: File '${filePath}' does not exist.`;
+      return `Error: File '${relPath}' does not exist. If you want to create a new file, use the 'write' tool instead: write({ path: "${relPath}", content: "..." }).`;
     }
 
     try {
+      const stats = statSync(filePath);
+      if (stats.isDirectory()) {
+        return `Error: '${relPath}' is a directory, not a file. The 'edit' tool can only edit files. Suggestion: Use 'glob' to list files or 'read' to inspect a specific file.`;
+      }
+
       const content = await Bun.file(filePath).text();
 
       if (!content.includes(oldString)) {
-        return `Error: The oldString was not found in '${filePath}'. Make sure whitespace and characters match exactly.`;
+        return `Error: The oldString was not found in '${relPath}'. Suggestion: Use the 'read' tool (read({ path: "${relPath}" })) to inspect the exact lines, whitespace, and formatting of the file before editing.`;
       }
 
       // Check occurrences
       const occurrences = content.split(oldString).length - 1;
       if (occurrences > 1) {
-        return `Error: The oldString matched ${occurrences} occurrences in '${filePath}'. Provide more surrounding context to uniquely identify the chunk.`;
+        return `Error: The oldString matched ${occurrences} occurrences in '${relPath}'. Suggestion: Use 'read' to inspect the surrounding lines and include more lines in oldString to uniquely identify the replacement chunk.`;
       }
 
       const updatedContent = content.replace(oldString, newString);
       await Bun.write(filePath, updatedContent);
 
-      const relPath = relative(process.cwd(), filePath).replace(/\\/g, "/");
       return `Successfully updated '${relPath}'.`;
     } catch (err: any) {
-      return `Error editing file '${filePath}': ${err.message || String(err)}`;
+      return `Error editing file '${relPath}': ${err.message || String(err)}. Suggestion: Check file permissions or use the 'read' tool to verify file contents.`;
     }
   },
 };
@@ -426,12 +482,13 @@ export class ToolRegistry {
   async execute(name: string, args: Record<string, any>): Promise<string> {
     const tool = this.get(name);
     if (!tool) {
-      return `Error: Tool '${name}' is not recognized.`;
+      const availableNames = Array.from(this.tools.keys()).join(", ");
+      return `Error: Tool '${name}' is not recognized. Available tools: ${availableNames}. Suggestion: If you want to list/discover files, use 'glob' (e.g. glob({ pattern: "**/*" })). If you want to read a file, use 'read'. If you want to search code, use 'grep'. If you want to create a file, use 'write'. If you want to discover skills, use 'browse_skills'.`;
     }
     try {
       return await tool.execute(args);
     } catch (err: any) {
-      return `Error executing tool '${name}': ${err.message || String(err)}`;
+      return `Error executing tool '${name}': ${err.message || String(err)}. Suggestion: Check your tool arguments or use 'browse_skills' to inspect the tool schema.`;
     }
   }
 }
