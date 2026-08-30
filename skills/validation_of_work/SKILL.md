@@ -14,7 +14,16 @@ tools_used:
 
 # Validation of Work Skill
 
-> **Note**: This is a process guideline. Do not invoke `validation_of_work` as a tool call. Use the `bash` tool to run verification commands (`tsc`, `bun test`, `npm run build`).
+Never mark a task complete without rigorous, multi-layer verification.
+
+---
+
+## ⚡ Core Principle: Empty Output is Strong Evidence of Success, NOT Failure
+
+> **CRITICAL RULE**: In validation and compilation tools, an empty error stream (`stderr: ""`, no errors printed, exit code 0) is **the strongest possible evidence of success, NOT a malfunction**.
+>
+> - When `bash({ command: "bunx tsc --noEmit" })` finishes with exit code 0 and empty output, it means **zero type errors exist in the codebase**. This is the definition of complete type safety.
+> - When `bash({ command: "git status" })` shows working tree clean, it confirms no unstaged or rogue modifications exist.
 
 ---
 
@@ -27,7 +36,7 @@ tools_used:
   # or
   bash({ command: "npx tsc --noEmit" })
   ```
-- **Rule**: All type errors must be resolved with 0 errors before proceeding.
+- **Rule**: Exit code 0 with 0 errors printed confirms total type safety.
 
 ### 2. Automated Test Execution
 - Run unit and integration tests:
@@ -36,7 +45,7 @@ tools_used:
   # or
   bash({ command: "npm test" })
   ```
-- **Rule**: All tests must pass (100% pass rate). If a test fails, invoke the `debugging` skill to reproduce and fix it.
+- **Rule**: All tests must pass (100% pass rate, 0 failures). If a test fails, invoke the `debugging` skill to reproduce and fix it.
 
 ### 3. Build & Bundle Verification
 - Run production build scripts if configured in `package.json`:

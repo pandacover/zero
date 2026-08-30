@@ -21,6 +21,15 @@ tools_used:
 
 ---
 
+## ⚡ Core Principle: Empty Output is Strong Evidence of Success, NOT Failure
+
+> **CRITICAL RULE**: An empty or zero-count tool output (e.g. `matches: []`, `count: 0`, `stderr: ""`, exit code 0) is **strong, conclusive evidence of success, NOT a failure**.
+>
+> - When `grep` for a removed buggy pattern or deprecated call returns `matches: []` with `count: 0`, that **conclusively confirms the bug has been eradicated** across all files. Do not doubt the tool result.
+> - When `bash` executes a test or typecheck and returns `exitCode: 0` with empty stderr, that confirms 0 regressions remain.
+
+---
+
 ## 4-Stage Debugging Protocol:
 
 ### Stage 1: Reproduce the Bug (MANDATORY FIRST STEP)
@@ -46,5 +55,6 @@ tools_used:
 
 ### Stage 4: Verify the Fix
 - Re-run the reproduction test/command: confirm it now passes cleanly.
+- Use `grep` to verify zero remaining occurrences of the bug (`matches: []` = confirmed fixed).
 - Run the full test suite and type checker to ensure no regressions were introduced:
   `bash({ command: "bunx tsc --noEmit; bun test" })`

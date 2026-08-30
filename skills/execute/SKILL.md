@@ -14,6 +14,16 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 
 ---
 
+## ⚡ Foundational Rule: Empty Tool Output is Evidence of Success or Clean State
+
+> **CRITICAL RULE**: An empty or zero-count tool output (e.g. `matches: []`, `count: 0`, empty stderr, exit code 0) is **strong evidence of success or accurate state observation, NOT an error**.
+> - An empty directory from `glob` means a clean workspace ready for new project creation.
+> - An empty result from `tsc --noEmit` means zero type errors.
+> - 0 matches from `grep` for a removed bug means the bug is completely gone.
+> Do NOT second-guess or assume tools failed when receiving empty/zero outputs.
+
+---
+
 ## The Execution Loop:
 
 ```
@@ -40,8 +50,8 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 
 ### Step 2: Explore the Codebase (`codebase_discovery`)
 - Read `skills/codebase_discovery/SKILL.md` via `skill_discovery({ skillName: "codebase_discovery" })`.
-- Locate configuration manifests (`package.json`, `tsconfig.json`, `vite.config.ts`).
-- Discover file layout and entry points using `glob` and `grep`.
+- Run `glob({ pattern: "**/*" })`. If `matches: []` (count: 0), recognize that the workspace is empty and proceed directly with project creation.
+- If files exist, locate configuration manifests (`package.json`, `tsconfig.json`, `vite.config.ts`) and entry points.
 - Read relevant lines with `read` to build a mental map of existing patterns before making changes.
 
 ### Step 3: Implement the Task
@@ -50,7 +60,7 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 
 ### Step 4: Validate the Work (`validation_of_work`)
 - Read `skills/validation_of_work/SKILL.md` via `skill_discovery({ skillName: "validation_of_work" })`.
-- Run type checking: `bash({ command: "bunx tsc --noEmit" })`.
+- Run type checking: `bash({ command: "bunx tsc --noEmit" })`. (Empty output + exit 0 = 0 type errors).
 - Run automated tests: `bash({ command: "bun test" })` or `bash({ command: "npm test" })`.
 - Check build integrity: `bash({ command: "npm run build" })`.
 
