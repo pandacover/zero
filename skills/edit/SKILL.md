@@ -1,7 +1,7 @@
 ---
 name: edit
+type: tool
 description: Replace an exact substring within an existing file with new content.
-tool: edit
 when_to_use:
   - Making targeted, surgical modifications to an existing file without rewriting the whole file.
   - Updating or refactoring a specific function, class, variable, or statement.

@@ -29,7 +29,9 @@ export const skillDiscoveryTool: Tool = {
 
     const requestedSkill = args.skillName ? String(args.skillName).trim().toLowerCase() : null;
     const seenSkills = new Set<string>();
-    const results: string[] = [];
+    const toolEntries: string[] = [];
+    const skillEntries: string[] = [];
+    let fullSkillDoc: string | null = null;
 
     for (const skillsDir of candidateDirs) {
       if (!existsSync(skillsDir)) continue;
@@ -43,6 +45,16 @@ export const skillDiscoveryTool: Tool = {
 
           if (seenSkills.has(skillKey)) continue;
 
+          if (requestedSkill && skillKey === requestedSkill) {
+            try {
+              fullSkillDoc = await Bun.file(fullPath).text();
+              seenSkills.add(skillKey);
+              break;
+            } catch {
+              // Ignore
+            }
+          }
+
           if (requestedSkill && skillKey !== requestedSkill) {
             continue;
           }
@@ -52,7 +64,15 @@ export const skillDiscoveryTool: Tool = {
             const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
             if (match && match[1]) {
               seenSkills.add(skillKey);
-              results.push(`### Skill: [${skillFolder}]\n\`\`\`yaml\n${match[1].trim()}\n\`\`\``);
+              const frontMatter = match[1].trim();
+              const isTool = frontMatter.includes("type: tool") || frontMatter.includes("parameters:");
+              const formatted = `### Skill: [${skillFolder}]\n\`\`\`yaml\n${frontMatter}\n\`\`\``;
+
+              if (isTool) {
+                toolEntries.push(formatted);
+              } else {
+                skillEntries.push(formatted);
+              }
             }
           } catch {
             // Ignore unreadable skill files
@@ -63,13 +83,32 @@ export const skillDiscoveryTool: Tool = {
       }
     }
 
-    if (results.length === 0) {
-      return requestedSkill
-        ? `Error: Skill '${requestedSkill}' was not found. Suggestion: Call 'skill_discovery' with no arguments to list all available tools and skills.`
-        : "No skills found under workspace or ~/.zero/skills directory. Available built-in tools are: skill_discovery, bash, glob, grep, read, write, edit.";
+    if (requestedSkill) {
+      if (fullSkillDoc) {
+        return `## Skill Documentation: [${requestedSkill}]\n\n${fullSkillDoc}`;
+      }
+      return `Error: Skill '${requestedSkill}' was not found. Suggestion: Call 'skill_discovery' with no arguments to list all available tools and skills.`;
     }
 
-    return `## Available Skills (${results.length} found):\n\n` + results.join("\n\n");
+    const sections: string[] = [];
+    if (toolEntries.length > 0) {
+      sections.push(
+        `## Callable Tools (${toolEntries.length} tools callable directly in tool_calls):\n\n` +
+          toolEntries.join("\n\n")
+      );
+    }
+    if (skillEntries.length > 0) {
+      sections.push(
+        `## Process & Domain Skills (${skillEntries.length} guidelines - read via skill_discovery, do NOT invoke as tool calls):\n\n` +
+          skillEntries.join("\n\n")
+      );
+    }
+
+    if (sections.length === 0) {
+      return "No skills found under workspace or ~/.zero/skills directory. Available built-in tools are: skill_discovery, bash, glob, grep, read, write, edit.";
+    }
+
+    return sections.join("\n\n---\n\n");
   },
 };
 
@@ -571,6 +610,20 @@ export class ToolRegistry {
   async execute(name: string, args: Record<string, any>): Promise<string> {
     const tool = this.get(name);
     if (!tool) {
+      const knownSkills = [
+        "execute",
+        "codebase_discovery",
+        "debugging",
+        "validation_of_work",
+        "react",
+        "vite",
+        "typescript",
+      ];
+
+      if (knownSkills.includes(name.toLowerCase())) {
+        return `Error: '${name}' is a process/domain skill, NOT a callable tool. To inspect the guidelines for '${name}', call: skill_discovery({ skillName: "${name}" }). Available callable tools are: skill_discovery, bash, glob, grep, read, write, edit.`;
+      }
+
       const availableNames = Array.from(this.tools.keys()).join(", ");
       return `Error: Tool '${name}' is not recognized. Available tools: ${availableNames}. Suggestion: If you want to discover skills and workflows, use 'skill_discovery'. If you want to execute terminal commands (tests, builds, typecheck), use 'bash'. If you want to list/discover files, use 'glob'. If you want to read a file, use 'read'. If you want to search code, use 'grep'. If you want to create a file, use 'write'. If you want to edit a file, use 'edit'.`;
     }

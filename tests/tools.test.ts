@@ -28,9 +28,10 @@ describe("Coding Tools & Skills Suite", () => {
     }
   });
 
-  it("skillDiscoveryTool discovers and lists YAML front-matters of all skills", async () => {
+  it("skillDiscoveryTool discovers and lists YAML front-matters of all skills separated by tools vs skills", async () => {
     const res = await skillDiscoveryTool.execute({});
-    expect(res).toContain("Available Skills");
+    expect(res).toContain("Callable Tools");
+    expect(res).toContain("Process & Domain Skills");
     expect(res).toContain("execute");
     expect(res).toContain("codebase_discovery");
     expect(res).toContain("debugging");
@@ -45,10 +46,10 @@ describe("Coding Tools & Skills Suite", () => {
     expect(res).toContain("write");
     expect(res).toContain("edit");
 
-    // Test specific skill query
+    // Test specific skill query returns full markdown documentation
     const debugRes = await skillDiscoveryTool.execute({ skillName: "debugging" });
-    expect(debugRes).toContain("Skill: [debugging]");
-    expect(debugRes).toContain("name: debugging");
+    expect(debugRes).toContain("Skill Documentation: [debugging]");
+    expect(debugRes).toContain("Debugging Skill");
     expect(debugRes).toContain("reproduce");
   });
 
@@ -287,5 +288,10 @@ describe("Coding Tools & Skills Suite", () => {
     expect(unrecRes).toContain("Tool 'list_files' is not recognized");
     expect(unrecRes).toContain("Available tools: skill_discovery, bash, glob, grep, read, write, edit");
     expect(unrecRes).toContain("If you want to list/discover files, use 'glob'");
+
+    // 7. Calling a process/domain skill as a tool call -> suggests skill_discovery
+    const skillCallRes = await registry.execute("codebase_discovery", { focusArea: "src" });
+    expect(skillCallRes).toContain("Error: 'codebase_discovery' is a process/domain skill, NOT a callable tool");
+    expect(skillCallRes).toContain("skill_discovery({ skillName: \"codebase_discovery\" })");
   });
 });

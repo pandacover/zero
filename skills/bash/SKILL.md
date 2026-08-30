@@ -1,7 +1,7 @@
 ---
 name: bash
+type: tool
 description: Execute shell commands sandboxed within the project workspace directory.
-tool: bash
 when_to_use:
   - Running build commands (e.g. 'npm run build', 'vite build', 'bun build').
   - Running test suites (e.g. 'bun test', 'npm test', 'vitest', 'jest').

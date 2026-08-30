@@ -1,7 +1,7 @@
 ---
 name: write
+type: tool
 description: Create or completely overwrite a file with specified content. Creates directories automatically.
-tool: write
 when_to_use:
   - Creating brand new source code files, tests, scripts, or documentation.
   - Completely rewriting or replacing the entire content of an existing file.

@@ -1,22 +1,18 @@
 ---
 name: vite
+type: domain_skill
 description: Domain skill for Vite build tool configuration, plugins, development server, path aliases, environment variables, and production bundling.
-tool: skill_discovery
 when_to_use:
   - Configuring or modifying 'vite.config.ts' or 'vite.config.js'.
   - Setting up Vite plugins (e.g. '@vitejs/plugin-react', tailwind, svgr).
   - Configuring path aliases (e.g. '@/*' pointing to 'src/*').
   - Debugging bundling, dev server proxy, or static asset issues.
-parameters:
-  topic:
-    type: string
-    description: Optional Vite topic (e.g., 'config', 'plugins', 'aliases', 'server', 'build').
-    required: false
+how_to_access: Read via skill_discovery({ skillName: "vite" }). Do NOT invoke as a tool.
 ---
 
 # Vite Domain Skill
 
-Best practices for Vite tooling, configuration, and bundling.
+> **Note**: This is a domain knowledge guideline. Do not invoke `vite` as a tool call. Use tools like `read`, `write`, `edit`, and `bash`.
 
 ---
 

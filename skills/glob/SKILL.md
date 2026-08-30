@@ -1,7 +1,7 @@
 ---
 name: glob
+type: tool
 description: Find files matching a glob pattern (e.g. '**/*.ts', 'src/**/*', '*.json').
-tool: glob
 when_to_use:
   - Discovering files or directory layout matching specific filename patterns (e.g. '**/*.test.ts', '**/*.json').
   - Checking if specific configuration or source files exist in the project.

@@ -1,22 +1,18 @@
 ---
 name: typescript
+type: domain_skill
 description: Domain skill for TypeScript strict typing, tsconfig.json configuration, TSX syntax, interfaces, generics, and compiler safety.
-tool: skill_discovery
 when_to_use:
   - Designing types, interfaces, enums, unions, or generic utility functions.
   - Setting up or tuning 'tsconfig.json' compiler options.
   - Resolving TypeScript compilation errors, type mismatches, or missing definitions.
   - Enforcing strict null checks and eliminating unsafe 'any' assertions.
-parameters:
-  topic:
-    type: string
-    description: Optional TypeScript topic (e.g., 'types', 'tsconfig', 'generics', 'strict', 'tsx').
-    required: false
+how_to_access: Read via skill_discovery({ skillName: "typescript" }). Do NOT invoke as a tool.
 ---
 
 # TypeScript Domain Skill
 
-Standards and best practices for robust, strict-mode TypeScript development.
+> **Note**: This is a domain knowledge guideline. Do not invoke `typescript` as a tool call. Use tools like `read`, `write`, `edit`, and `bash`.
 
 ---
 

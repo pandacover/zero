@@ -1,22 +1,18 @@
 ---
 name: react
+type: domain_skill
 description: Domain skill for React component architecture, hooks best practices, JSX syntax, state management, and modern UI patterns.
-tool: skill_discovery
 when_to_use:
   - Building, modifying, or refactoring React components (.tsx, .jsx).
   - Designing custom React hooks, component hierarchies, or context providers.
   - Resolving React re-rendering issues, stale closures, or state bugs.
   - Integrating UI component libraries (Tailwind, Lucide icons, Framer Motion, Radix UI).
-parameters:
-  topic:
-    type: string
-    description: Optional React topic (e.g., 'hooks', 'components', 'state', 'forms', 'performance').
-    required: false
+how_to_access: Read via skill_discovery({ skillName: "react" }). Do NOT invoke as a tool.
 ---
 
 # React Domain Skill
 
-Best practices and architectural standards for modern React (18+) development.
+> **Note**: This is a domain knowledge guideline. Do not invoke `react` as a tool call. Use tools like `read`, `write`, `edit`, and `bash`.
 
 ---
 

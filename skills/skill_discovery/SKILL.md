@@ -1,7 +1,7 @@
 ---
 name: skill_discovery
+type: tool
 description: Discover and inspect available skills and tools along with their YAML front-matter, parameters, and metadata.
-tool: skill_discovery
 when_to_use:
   - Discovering what tools and skills are available in the current workspace or global configuration.
   - Inspecting specific skill requirements, parameters, and usage instructions.

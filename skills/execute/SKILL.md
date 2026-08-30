@@ -1,20 +1,18 @@
 ---
 name: execute
+type: process_skill
 description: The core orchestration workflow to follow for every user task or query.
-tool: skill_discovery
 when_to_use:
   - Triggered on every user prompt, coding request, or task.
   - Guiding end-to-end task execution from understanding to exploration, implementation, validation, debugging, and summary.
-parameters:
-  task:
-    type: string
-    description: The user task or objective to execute.
-    required: true
+how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke as a tool.
 ---
 
 # Execute Workflow Skill
 
-This skill defines the mandatory execution loop for every query and task handled by the agent.
+> **Note**: This is a process skill / guideline to follow mentally. Do not invoke `execute` as a tool call. Use callable tools (`skill_discovery`, `bash`, `glob`, `grep`, `read`, `write`, `edit`) to carry out each step.
+
+---
 
 ## The Execution Loop:
 
@@ -41,21 +39,24 @@ This skill defines the mandatory execution loop for every query and task handled
 - Identify which technologies and domain skills will be relevant (e.g., React, Vite, TypeScript).
 
 ### Step 2: Explore the Codebase (`codebase_discovery`)
+- Read `skills/codebase_discovery/SKILL.md` via `skill_discovery({ skillName: "codebase_discovery" })`.
 - Locate configuration manifests (`package.json`, `tsconfig.json`, `vite.config.ts`).
 - Discover file layout and entry points using `glob` and `grep`.
 - Read relevant lines with `read` to build a mental map of existing patterns before making changes.
 
 ### Step 3: Implement the Task
-- Use appropriate domain skills (`react`, `vite`, `typescript`).
+- Consult appropriate domain skills (`react`, `vite`, `typescript`) using `skill_discovery`.
 - Apply minimal, surgical modifications using `edit`, or create clean new files with `write`.
 
 ### Step 4: Validate the Work (`validation_of_work`)
-- Run type checking (e.g. `bash({ command: "bunx tsc --noEmit" })`).
-- Run automated tests (e.g. `bash({ command: "bun test" })` or `bash({ command: "npm test" })`).
-- Check build integrity (e.g. `bash({ command: "npm run build" })`).
+- Read `skills/validation_of_work/SKILL.md` via `skill_discovery({ skillName: "validation_of_work" })`.
+- Run type checking: `bash({ command: "bunx tsc --noEmit" })`.
+- Run automated tests: `bash({ command: "bun test" })` or `bash({ command: "npm test" })`.
+- Check build integrity: `bash({ command: "npm run build" })`.
 
 ### Step 5: Debug if Errors Occur (`debugging`)
 - **Core Principle**: *"Every bug is hiding in plain sight, and if you cannot reproduce it you have not fixed it."*
+- Read `skills/debugging/SKILL.md` via `skill_discovery({ skillName: "debugging" })`.
 - Reproduce the exact error with a command or script before changing code.
 - Apply targeted fixes and loop back to **Step 4: Validate Work** until all checks pass cleanly.
 

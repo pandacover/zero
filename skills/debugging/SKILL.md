@@ -1,23 +1,23 @@
 ---
 name: debugging
+type: process_skill
 description: Systematic process for reproducing, isolating, and fixing bugs. Every bug is hiding in plain sight; if you cannot reproduce it, you have not fixed it.
-tool: skill_discovery
 when_to_use:
   - Investigating test failures, build errors, type errors, or runtime exceptions.
   - Resolving unexpected behavior, state inconsistencies, or styling regressions.
   - Diagnosing broken features or misbehaving API integrations.
-parameters:
-  issue:
-    type: string
-    description: Description of the bug, error message, or unexpected behavior.
-    required: false
+how_to_access: Read via skill_discovery({ skillName: "debugging" }). Do NOT invoke as a tool.
+tools_used:
+  - bash
+  - read
+  - grep
+  - edit
 ---
 
 # Debugging Skill
 
 > *"Every bug is hiding in plain sight, and if you cannot reproduce it you have not fixed it."*
-
-Debugging requires a methodical scientific approach. Never apply blind guesses or untested fixes.
+> **Note**: This is a process guideline. Do not call `debugging` as a tool call. Use tools like `bash`, `read`, `grep`, and `edit`.
 
 ---
 

@@ -1,21 +1,20 @@
 ---
 name: validation_of_work
+type: process_skill
 description: Comprehensive verification procedures to validate changes, run test suites, check TypeScript types, and verify build integrity.
-tool: skill_discovery
 when_to_use:
   - After creating, updating, or refactoring code files.
   - Before concluding any task or reporting completion to the user.
   - Ensuring no type errors, syntax mistakes, or broken tests were introduced.
-parameters:
-  scope:
-    type: string
-    description: Optional validation scope (e.g., 'typecheck', 'tests', 'build', 'all').
-    required: false
+how_to_access: Read via skill_discovery({ skillName: "validation_of_work" }). Do NOT invoke as a tool.
+tools_used:
+  - bash
+  - git
 ---
 
 # Validation of Work Skill
 
-Never mark a task complete without rigorous, multi-layer verification.
+> **Note**: This is a process guideline. Do not invoke `validation_of_work` as a tool call. Use the `bash` tool to run verification commands (`tsc`, `bun test`, `npm run build`).
 
 ---
 
