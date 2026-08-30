@@ -20,20 +20,24 @@ tools_used:
 
 ---
 
-## ⚡ Core Principle: Consistent Empty Output Across Multiple Tool Calls
+## ⚡ The 3-Time Consistency Rule for Empty Codebases
 
-- A single empty tool output (e.g. `matches: []`, `count: 0`) might simply reflect an overly specific pattern or subfolder.
-- **Consistency is key**: If multiple tool calls (e.g. `glob({ pattern: "**/*" })` from the workspace root) **consistently return empty results**, that is **strong evidence of a clean/empty workspace**, not a tool malfunction or failure.
-- **How to proceed upon consistent empty output**:
-  - **Natural Course of Action**: If the user's task is to create, scaffold, or initialize a new project/feature, treat the empty directory as the expected starting state and proceed with project creation.
-  - **Ask the User**: If the user asked to modify, refactor, or debug an existing codebase that was expected to contain files, communicate the empty state directly to the user and ask for guidance or clarification on the target path.
+> **CRITICAL RULE (3-TIME CHECK)**:
+> If discovery tools execute successfully **3 times** and return **0 files consistently across all 3 calls** (e.g. `glob({ pattern: "**/*" })`, `glob({ pattern: "*" })`, `glob({ pattern: "src/**/*" })` all return `count: 0`), treat the codebase as **100% conclusively empty**.
+>
+> **Do NOT loop or continue searching beyond 3 empty results.** Proceed immediately according to the task intent:
+>
+> 1. **Path A (Scaffolding / New Project Creation)**:
+>    - If the user's prompt is to build, initialize, create, or scaffold a project or feature, immediately proceed with the **natural course of action** (e.g. creating files using `write`, scaffolding directory structure, creating `package.json`).
+> 2. **Path B (Existing Project Expected)**:
+>    - If the user's prompt explicitly requested modifying, refactoring, or debugging an existing codebase that was assumed to exist, stop exploring and directly explain to the user that the directory is empty and ask for guidance.
 
 ---
 
 ## 4-Step Discovery Process:
 
 ### 1. Inspect Project Manifests & Configs
-- Use `glob({ pattern: "**/*" })` to check existing files. If consistently empty, follow the decision rule above (proceed with scaffolding or ask user).
+- Use `glob({ pattern: "**/*" })` to check existing files. If 3 checks consistently show 0 files, apply the 3-Time Consistency Rule above (proceed with scaffolding or ask user).
 - Read `package.json` with `read` to understand dependencies, frameworks, scripts, and runtime environment.
 - Read `tsconfig.json` to understand TypeScript compiler options, target, paths, and module resolution.
 - Read build tool configs (`vite.config.ts`, `next.config.js`, etc.) to understand bundling and path aliases.

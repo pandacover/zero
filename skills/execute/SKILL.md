@@ -1,7 +1,7 @@
 ---
 name: execute
 type: process_skill
-description: The core orchestration workflow to follow for every user task or query, including deterministic tool error recovery.
+description: The core orchestration workflow to follow for every user task or query, including 3-time consistency checks and deterministic tool error recovery.
 when_to_use:
   - Triggered on every user prompt, coding request, or task.
   - Guiding end-to-end task execution from understanding to exploration, implementation, validation, debugging, and summary.
@@ -14,13 +14,13 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 
 ---
 
-## ⚡ Core Principles: Consistency & Mechanical Recovery
+## ⚡ Core Principles: 3-Time Consistency & Mechanical Recovery
 
-1. **Consistent Output is Evidence of State**:
-   - An isolated output may be ambiguous. When tool outputs are **consistent across multiple calls** (e.g. `glob` from root confirms empty workspace, or tests pass across multiple runs), that provides strong evidence of actual state.
-   - **Decision Rule**:
-     - *Proceed Naturally*: If the consistent state aligns with the user's objective (e.g. scaffolding a new project in an empty folder, or verifying all tests pass), proceed with the natural course of action.
-     - *Ask the User*: If the consistent state conflicts with prerequisites (e.g. expected an existing codebase to modify but directory is empty), explain the findings and ask the user.
+1. **3-Time Consistency Rule for Empty State**:
+   - If discovery tools execute successfully **3 times** and return 0 files consistently across all 3 calls (`count: 0`), treat the codebase as **100% conclusively empty**.
+   - **Do NOT loop indefinitely or keep searching.** Proceed immediately:
+     - *Proceed with Natural Next Steps*: If creating or initializing a project/component, immediately start creating files with `write`.
+     - *Ask the User*: If modifying an existing codebase was expected, explain the empty state and ask for the correct path or guidance.
 2. **Mechanical Tool Recovery**:
    - When an `edit` fails (`outcome: "mismatch"`): **Immediately `read` the target file region before retrying.** Never blindly re-attempt `edit`.
    - When a `read` fails with `not_found`: Use `glob` to find the correct file path.
@@ -54,7 +54,7 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 
 ### Step 2: Explore the Codebase (`codebase_discovery`)
 - Read `skills/codebase_discovery/SKILL.md` via `skill_discovery({ skillName: "codebase_discovery" })`.
-- Run `glob({ pattern: "**/*" })`. If consistently empty across checks, evaluate decision path (proceed with project creation if new project, or ask user if existing project expected).
+- Run `glob({ pattern: "**/*" })`. If 3 checks consistently show 0 files, apply the **3-Time Consistency Rule** (proceed with project creation if new project, or ask user if existing project expected).
 - If files exist, locate configuration manifests (`package.json`, `tsconfig.json`, `vite.config.ts`) and entry points.
 - Read relevant lines with `read` to build a mental map of existing patterns before making changes.
 

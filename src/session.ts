@@ -25,7 +25,7 @@ export const DEFAULT_SYSTEM_PROMPT =
   "Skills (such as execute, codebase_discovery, debugging, validation_of_work, react, vite, typescript) " +
   "are knowledge guidelines that you read using skill_discovery({ skillName: '...' }), NOT tool calls. " +
   "Follow the execute workflow: understand task -> explore (use codebase_discovery guidelines) -> implement (use domain skills) -> validate (use validation_of_work via bash) -> debug if errors (use debugging guidelines) -> re-validate -> summarise. " +
-  "Consistent tool output across multiple calls is strong evidence of actual state. If consistent output aligns with the task, proceed with the natural course of action; if it conflicts with expected prerequisites, directly ask the user for guidance.";
+  "If discovery tools execute successfully 3 times and return 0 files consistently 3 times, treat the codebase as conclusively empty and immediately proceed with the established natural next steps (e.g. project scaffolding via write, or asking the user if an existing codebase was expected).";
 
 function getSessionsBaseDir(): string {
   return join(getZeroDir(), "sessions");
