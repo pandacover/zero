@@ -23,7 +23,6 @@ export function createToolResponse<T = any>(params: {
     message: string;
     details?: string;
   };
-  suggestion?: string;
   metadata?: Record<string, any>;
 }): string {
   const payload: ToolResponse<T> = {
@@ -32,7 +31,6 @@ export function createToolResponse<T = any>(params: {
     ...(params.data !== undefined && { data: params.data }),
     ...(params.execution && { execution: params.execution }),
     ...(params.error && { error: params.error }),
-    ...(params.suggestion && { suggestion: params.suggestion }),
     ...(params.metadata && { metadata: params.metadata }),
   };
   return JSON.stringify(payload, null, 2);
@@ -147,7 +145,6 @@ export const skillDiscoveryTool: Tool = {
           type: "validation_error",
           message: `Skill '${requestedSkill}' was not found.`,
         },
-        suggestion: "Call 'skill_discovery' with no arguments to list all available tools and skills.",
       });
     }
 
@@ -196,7 +193,6 @@ export const bashTool: Tool = {
           type: "validation_error",
           message: "'command' parameter is required for the bash tool.",
         },
-        suggestion: "Provide a valid shell command, e.g. bash({ command: 'bun test' }).",
       });
     }
 
@@ -254,7 +250,6 @@ export const bashTool: Tool = {
             type: "command_execution_error",
             message: `Command '${rawCommand}' timed out after ${timeout}ms.`,
           },
-          suggestion: "Break down long-running commands or specify a larger timeoutMs.",
         });
       }
 
@@ -267,8 +262,6 @@ export const bashTool: Tool = {
             type: "command_execution_error",
             message: `Command '${rawCommand}' exited with code ${exitCode}.`,
           },
-          suggestion:
-            "If this is a test, build, or type failure, use the 'debugging' skill to isolate and fix the root cause, or use 'read' to inspect failing files.",
         });
       }
 
@@ -285,7 +278,6 @@ export const bashTool: Tool = {
           type: "tool_invocation_error",
           message: `Error executing command '${rawCommand}': ${err.message || String(err)}`,
         },
-        suggestion: "Check if the command binary is installed or verify command syntax.",
       });
     }
   },
@@ -328,8 +320,6 @@ export const globTool: Tool = {
           type: "filesystem_error",
           message: `Directory '${rel}' does not exist.`,
         },
-        suggestion:
-          "Use glob({ pattern: '**/*' }) without a custom path to search from the workspace root, or check parent directories.",
       });
     }
 
@@ -337,7 +327,6 @@ export const globTool: Tool = {
       const stats = statSync(targetPath);
       if (stats.isFile()) {
         const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || targetPath;
-        const parentDir = dirname(rel) || ".";
         return createToolResponse({
           toolStatus: "success",
           outcome: "invalid_target",
@@ -349,7 +338,6 @@ export const globTool: Tool = {
             type: "filesystem_error",
             message: `Path '${rel}' is a file, not a directory.`,
           },
-          suggestion: `Use the 'read' tool to view this file (read({ path: "${rel}" })), or search its directory with glob({ pattern: "${pattern}", path: "${parentDir}" }).`,
         });
       }
 
@@ -366,21 +354,7 @@ export const globTool: Tool = {
 
       const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
 
-      if (matches.length === 0) {
-        return createToolResponse({
-          toolStatus: "success",
-          outcome: "not_found",
-          data: {
-            path: rel,
-            pattern,
-            matches: [],
-            count: 0,
-          },
-          suggestion:
-            "Try a broader pattern like '**/*' or search for text contents across files using the 'grep' tool.",
-        });
-      }
-
+      // 0 matches in an existing directory is a valid empty query result (success), not an error
       return createToolResponse({
         toolStatus: "success",
         outcome: "success",
@@ -399,7 +373,6 @@ export const globTool: Tool = {
           type: "tool_invocation_error",
           message: `Error scanning glob '${pattern}': ${err.message || String(err)}`,
         },
-        suggestion: "Check if the pattern is valid glob syntax or use 'grep' to search content.",
       });
     }
   },
@@ -447,7 +420,6 @@ export const grepTool: Tool = {
           type: "validation_error",
           message: "'pattern' parameter is required for grep.",
         },
-        suggestion: "Provide a keyword or regex pattern to search, e.g. grep({ pattern: 'functionName' }).",
       });
     }
 
@@ -464,7 +436,6 @@ export const grepTool: Tool = {
           type: "filesystem_error",
           message: `Path '${rel}' does not exist.`,
         },
-        suggestion: `Use 'glob' to discover valid directory paths or search from workspace root with grep({ pattern: "${pattern}", path: "." }).`,
       });
     }
 
@@ -515,21 +486,8 @@ export const grepTool: Tool = {
       }
 
       const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
-      if (matches.length === 0) {
-        return createToolResponse({
-          toolStatus: "success",
-          outcome: "not_found",
-          data: {
-            path: rel,
-            pattern,
-            matches: [],
-            count: 0,
-          },
-          suggestion:
-            "Try case-insensitive search (caseSensitive: false), simplify the regex/pattern, or use 'glob' to find files and 'read' to inspect them.",
-        });
-      }
 
+      // 0 matches is a valid search result (success), not an error
       return createToolResponse({
         toolStatus: "success",
         outcome: "success",
@@ -548,8 +506,6 @@ export const grepTool: Tool = {
           type: "tool_invocation_error",
           message: `Error in grep '${pattern}': ${err.message || String(err)}`,
         },
-        suggestion:
-          "If pattern is a complex regex, try a simpler literal string or verify regex escape characters.",
       });
     }
   },
@@ -589,7 +545,6 @@ export const readTool: Tool = {
           type: "validation_error",
           message: "'path' parameter is required for the read tool.",
         },
-        suggestion: "Provide a file path, e.g. read({ path: 'src/index.ts' }).",
       });
     }
 
@@ -597,7 +552,6 @@ export const readTool: Tool = {
     const relPath = relative(process.cwd(), filePath).replace(/\\/g, "/") || rawPath;
 
     if (!existsSync(filePath)) {
-      const fileBase = basename(filePath);
       return createToolResponse({
         toolStatus: "success",
         outcome: "not_found",
@@ -608,7 +562,6 @@ export const readTool: Tool = {
           type: "filesystem_error",
           message: `File '${relPath}' does not exist.`,
         },
-        suggestion: `Use the 'glob' tool (e.g. glob({ pattern: "**/*${fileBase}*" }) or glob({ pattern: "**/*" })) to find the correct file path.`,
       });
     }
 
@@ -626,7 +579,6 @@ export const readTool: Tool = {
             type: "filesystem_error",
             message: `'${relPath}' is a directory, not a file. The 'read' tool can only read files.`,
           },
-          suggestion: `Use the 'glob' tool to inspect directory contents (e.g. glob({ pattern: "**/*", path: "${relPath}" })).`,
         });
       }
 
@@ -663,7 +615,6 @@ export const readTool: Tool = {
             type: "validation_error",
             message: `startLine ${start} exceeds total lines (${lines.length}) in '${relPath}'.`,
           },
-          suggestion: `Read lines 1-${Math.min(lines.length, 100)} instead.`,
         });
       }
 
@@ -692,7 +643,6 @@ export const readTool: Tool = {
           type: "filesystem_error",
           message: `Error reading file '${relPath}': ${err.message || String(err)}`,
         },
-        suggestion: "Check permissions or verify if the file is binary.",
       });
     }
   },
@@ -729,7 +679,6 @@ export const writeTool: Tool = {
           type: "validation_error",
           message: "'path' parameter is required for the write tool.",
         },
-        suggestion: "Provide a file path, e.g. write({ path: 'src/app.ts', content: '...' }).",
       });
     }
 
@@ -752,7 +701,6 @@ export const writeTool: Tool = {
               type: "filesystem_error",
               message: `Cannot write to '${relPath}' because it is an existing directory.`,
             },
-            suggestion: `Specify a filename inside this directory, e.g. write({ path: "${relPath}/filename.ext", content: "..." }).`,
           });
         }
       }
@@ -779,7 +727,6 @@ export const writeTool: Tool = {
           type: "filesystem_error",
           message: `Error writing file '${relPath}': ${err.message || String(err)}`,
         },
-        suggestion: "Verify file permissions and path validity.",
       });
     }
   },
@@ -819,8 +766,6 @@ export const editTool: Tool = {
           type: "validation_error",
           message: "'path' parameter is required for the edit tool.",
         },
-        suggestion:
-          "Provide a file path, e.g. edit({ path: 'src/index.ts', oldString: '...', newString: '...' }).",
       });
     }
 
@@ -840,7 +785,6 @@ export const editTool: Tool = {
           type: "filesystem_error",
           message: `File '${relPath}' does not exist.`,
         },
-        suggestion: `If you want to create a new file, use the 'write' tool instead: write({ path: "${relPath}", content: "..." }).`,
       });
     }
 
@@ -858,7 +802,6 @@ export const editTool: Tool = {
             type: "filesystem_error",
             message: `'${relPath}' is a directory, not a file. The 'edit' tool can only edit files.`,
           },
-          suggestion: "Use 'glob' to list files or 'read' to inspect a specific file.",
         });
       }
 
@@ -876,7 +819,6 @@ export const editTool: Tool = {
             type: "filesystem_error",
             message: `The oldString was not found in '${relPath}'.`,
           },
-          suggestion: `Use the 'read' tool (read({ path: "${relPath}" })) to inspect the exact lines, whitespace, and formatting of the file before editing.`,
         });
       }
 
@@ -894,8 +836,6 @@ export const editTool: Tool = {
             type: "filesystem_error",
             message: `The oldString matched ${occurrences} occurrences in '${relPath}'.`,
           },
-          suggestion:
-            "Use 'read' to inspect the surrounding lines and include more lines in oldString to uniquely identify the replacement chunk.",
         });
       }
 
@@ -918,7 +858,6 @@ export const editTool: Tool = {
           type: "filesystem_error",
           message: `Error editing file '${relPath}': ${err.message || String(err)}`,
         },
-        suggestion: "Check file permissions or use the 'read' tool to verify file contents.",
       });
     }
   },
@@ -1002,9 +941,8 @@ export class ToolRegistry {
           },
           error: {
             type: "tool_invocation_error",
-            message: `'${name}' is a process/domain skill, NOT a callable tool.`,
+            message: `'${name}' is a process/domain skill, NOT a callable tool. To inspect '${name}' guidelines, call skill_discovery({ skillName: "${name}" }).`,
           },
-          suggestion: `To inspect the guidelines for '${name}', call: skill_discovery({ skillName: "${name}" }). Available callable tools are: skill_discovery, bash, glob, grep, read, write, edit.`,
         });
       }
 
@@ -1017,9 +955,8 @@ export class ToolRegistry {
         },
         error: {
           type: "tool_invocation_error",
-          message: `Tool '${name}' is not recognized.`,
+          message: `Tool '${name}' is not recognized. Available tools: ${availableNames}.`,
         },
-        suggestion: `Available tools: ${availableNames}. Suggestion: If you want to discover skills and workflows, use 'skill_discovery'. If you want to execute terminal commands (tests, builds, typecheck), use 'bash'. If you want to list/discover files, use 'glob'. If you want to read a file, use 'read'. If you want to search code, use 'grep'. If you want to create a file, use 'write'. If you want to edit a file, use 'edit'.`,
       });
     }
 
@@ -1033,7 +970,6 @@ export class ToolRegistry {
           type: "tool_invocation_error",
           message: `Error executing tool '${name}': ${err.message || String(err)}`,
         },
-        suggestion: "Check your tool arguments or use 'skill_discovery' to inspect the tool schema.",
       });
     }
   }

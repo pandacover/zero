@@ -528,10 +528,7 @@ export async function runCLI(): Promise<void> {
             if (isToolError) {
               spinner.fail(`[${event.toolName}] tool error (${event.durationMs}ms)`);
               if (parsed?.error?.message) {
-                console.log(`\x1b[31m  Error: ${parsed.error.message}\x1b[0m`);
-              }
-              if (parsed?.suggestion) {
-                console.log(`\x1b[33m  Suggestion: ${parsed.suggestion}\x1b[0m\n`);
+                console.log(`\x1b[31m  Error: ${parsed.error.message}\x1b[0m\n`);
               }
             } else if (parsed?.outcome === "failure" || parsed?.outcome === "timeout") {
               spinner.fail(`[${event.toolName}] ${parsed.outcome} (${event.durationMs}ms)`);
@@ -550,16 +547,11 @@ export async function runCLI(): Promise<void> {
                   : parsed.execution.stderr;
                 console.log(`\x1b[31m  ${errSnippet.replace(/\n/g, "\n  ")}\x1b[0m`);
               }
-              if (parsed.suggestion) {
-                console.log(`\x1b[33m  Suggestion: ${parsed.suggestion}\x1b[0m\n`);
-              }
+              console.log();
             } else if (parsed?.outcome === "not_found" || parsed?.outcome === "mismatch" || parsed?.outcome === "invalid_target") {
               spinner.warn(`[${event.toolName}] ${parsed.outcome} (${event.durationMs}ms)`);
               if (parsed.error?.message) {
-                console.log(`\x1b[33m  Notice: ${parsed.error.message}\x1b[0m`);
-              }
-              if (parsed.suggestion) {
-                console.log(`\x1b[36m  Suggestion: ${parsed.suggestion}\x1b[0m\n`);
+                console.log(`\x1b[33m  Notice: ${parsed.error.message}\x1b[0m\n`);
               }
             } else {
               spinner.succeed(`[${event.toolName}] completed (${event.durationMs}ms)`);

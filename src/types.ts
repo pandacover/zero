@@ -78,7 +78,6 @@ export interface ToolResponse<T = any> {
     message: string;
     details?: string;
   };
-  suggestion?: string;
   metadata?: Record<string, any>;
 }
 

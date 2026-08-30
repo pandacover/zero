@@ -122,7 +122,6 @@ describe("Coding Tools & Skills Suite", () => {
     expect(res.outcome).toBe("failure");
     expect(res.execution?.exitCode).toBe(1);
     expect(res.error?.type).toBe("command_execution_error");
-    expect(res.suggestion).toContain("debugging");
   });
 
   it("bashTool enforces timeout limits on long running commands", async () => {
@@ -136,7 +135,6 @@ describe("Coding Tools & Skills Suite", () => {
     expect(res.outcome).toBe("timeout");
     expect(res.execution?.timedOut).toBe(true);
     expect(res.error?.type).toBe("command_execution_error");
-    expect(res.suggestion).toContain("timeoutMs");
   });
 
   it("writeTool creates directories and writes content with structured response", async () => {
@@ -230,7 +228,6 @@ describe("Coding Tools & Skills Suite", () => {
     expect(missingRes.outcome).toBe("mismatch");
     expect(missingRes.data.occurrences).toBe(0);
     expect(missingRes.error?.message).toContain("oldString was not found");
-    expect(missingRes.suggestion).toContain("read");
 
     // Ambiguous substring (matches multiple times)
     const rawDup = await editTool.execute({
@@ -243,10 +240,9 @@ describe("Coding Tools & Skills Suite", () => {
     expect(dupRes.outcome).toBe("mismatch");
     expect(dupRes.data.occurrences).toBe(2);
     expect(dupRes.error?.message).toContain("matched 2 occurrences");
-    expect(dupRes.suggestion).toContain("read");
   });
 
-  it("globTool finds matching files with structured data payload", async () => {
+  it("globTool finds matching files with structured data payload, returning count 0 on empty without error", async () => {
     await writeTool.execute({ path: `${TEST_DIR}/a.ts`, content: "a" });
     await writeTool.execute({ path: `${TEST_DIR}/b.ts`, content: "b" });
     await writeTool.execute({ path: `${TEST_DIR}/c.json`, content: "{}" });
@@ -263,6 +259,17 @@ describe("Coding Tools & Skills Suite", () => {
     expect(res.data.matches).toContain("a.ts");
     expect(res.data.matches).toContain("b.ts");
     expect(res.data.matches).not.toContain("c.json");
+
+    // Empty search should be outcome: "success" with count: 0
+    const rawEmpty = await globTool.execute({
+      pattern: "*.xyz",
+      path: TEST_DIR,
+    });
+    const emptyRes: ToolResponse = JSON.parse(rawEmpty);
+    expect(emptyRes.toolStatus).toBe("success");
+    expect(emptyRes.outcome).toBe("success");
+    expect(emptyRes.data.count).toBe(0);
+    expect(emptyRes.data.matches).toEqual([]);
   });
 
   it("grepTool finds pattern matches with line numbers and structured objects", async () => {
@@ -287,6 +294,17 @@ describe("Coding Tools & Skills Suite", () => {
     expect(res.data.count).toBe(2);
     expect(res.data.matches.some((m: any) => m.content.includes("quick brown fox"))).toBe(true);
     expect(res.data.matches.some((m: any) => m.content.includes("foxes playing"))).toBe(true);
+
+    // 0 matches in grep returns outcome: "success" with count: 0
+    const rawZero = await grepTool.execute({
+      pattern: "nonExistent12345",
+      path: TEST_DIR,
+    });
+    const zeroRes: ToolResponse = JSON.parse(rawZero);
+    expect(zeroRes.toolStatus).toBe("success");
+    expect(zeroRes.outcome).toBe("success");
+    expect(zeroRes.data.count).toBe(0);
+    expect(zeroRes.data.matches).toEqual([]);
   });
 
   it("ToolRegistry registers tools and generates OpenAI JSON schemas", () => {
@@ -307,8 +325,8 @@ describe("Coding Tools & Skills Suite", () => {
     ]);
   });
 
-  it("returns proper structured errors, diagnostic data, and directions when tools are misused", async () => {
-    // 1. Calling read on a directory -> invalid_target + suggestion: glob
+  it("returns proper structured errors and diagnostic data when tools encounter invalid inputs", async () => {
+    // 1. Calling read on a directory -> invalid_target
     mkdirSync(TEST_DIR, { recursive: true });
     const rawDir = await readTool.execute({ path: TEST_DIR });
     const dirRes: ToolResponse = JSON.parse(rawDir);
@@ -316,16 +334,14 @@ describe("Coding Tools & Skills Suite", () => {
     expect(dirRes.outcome).toBe("invalid_target");
     expect(dirRes.data.targetType).toBe("directory");
     expect(dirRes.error?.message).toContain("directory");
-    expect(dirRes.suggestion).toContain("glob");
 
-    // 2. Calling read on non-existent file -> not_found + suggestion: glob
+    // 2. Calling read on non-existent file -> not_found
     const rawMissing = await readTool.execute({ path: `${TEST_DIR}/missing.txt` });
     const missingRes: ToolResponse = JSON.parse(rawMissing);
     expect(missingRes.toolStatus).toBe("success");
     expect(missingRes.outcome).toBe("not_found");
-    expect(missingRes.suggestion).toContain("glob");
 
-    // 3. Calling edit on non-existent file -> not_found + suggestion: write
+    // 3. Calling edit on non-existent file -> not_found
     const rawEditMissing = await editTool.execute({
       path: `${TEST_DIR}/nonexistent.txt`,
       oldString: "a",
@@ -334,9 +350,8 @@ describe("Coding Tools & Skills Suite", () => {
     const editMissingRes: ToolResponse = JSON.parse(rawEditMissing);
     expect(editMissingRes.toolStatus).toBe("success");
     expect(editMissingRes.outcome).toBe("not_found");
-    expect(editMissingRes.suggestion).toContain("write");
 
-    // 4. Calling glob on a file instead of directory -> invalid_target + suggestion: read
+    // 4. Calling glob on a file instead of directory -> invalid_target
     await writeTool.execute({ path: `${TEST_DIR}/sample.txt`, content: "hello world" });
     const rawGlobFile = await globTool.execute({
       pattern: "*.txt",
@@ -346,24 +361,21 @@ describe("Coding Tools & Skills Suite", () => {
     expect(globFileRes.toolStatus).toBe("success");
     expect(globFileRes.outcome).toBe("invalid_target");
     expect(globFileRes.data.targetType).toBe("file");
-    expect(globFileRes.suggestion).toContain("read");
 
-    // 5. Calling unrecognized tool name in registry -> tool_error + suggestions
+    // 5. Calling unrecognized tool name in registry -> tool_error
     const registry = new ToolRegistry(defaultTools);
     const rawUnrec = await registry.execute("list_files", { dir: "." });
     const unrecRes: ToolResponse = JSON.parse(rawUnrec);
     expect(unrecRes.toolStatus).toBe("tool_error");
     expect(unrecRes.outcome).toBe("tool_error");
     expect(unrecRes.error?.message).toContain("list_files");
-    expect(unrecRes.suggestion).toContain("glob");
 
-    // 6. Calling a process/domain skill as a tool call -> tool_error + skill_discovery redirect
+    // 6. Calling a process/domain skill as a tool call -> tool_error + skill notice
     const rawSkillCall = await registry.execute("codebase_discovery", { focusArea: "src" });
     const skillCallRes: ToolResponse = JSON.parse(rawSkillCall);
     expect(skillCallRes.toolStatus).toBe("tool_error");
     expect(skillCallRes.outcome).toBe("tool_error");
     expect(skillCallRes.data.attemptedName).toBe("codebase_discovery");
     expect(skillCallRes.error?.message).toContain("process/domain skill");
-    expect(skillCallRes.suggestion).toContain("skill_discovery");
   });
 });
