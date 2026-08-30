@@ -4,19 +4,19 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import type { Tool } from "./types.ts";
 
 /**
- * Browse Skills tool: List all skills' YAML front-matter (name, description, and metadata).
+ * Skill Discovery tool: Discover and inspect available skills and tools along with their YAML front-matter.
  */
-export const browseSkillsTool: Tool = {
-  name: "browse_skills",
+export const skillDiscoveryTool: Tool = {
+  name: "skill_discovery",
   description:
-    "List all skills and tools along with their YAML front-matter (name, description, parameters, and metadata) to discover available capabilities.",
+    "Discover and inspect available skills and tools along with their YAML front-matter (name, description, parameters, and metadata) to discover available capabilities.",
   parameters: {
     type: "object",
     properties: {
       skillName: {
         type: "string",
         description:
-          "Optional skill name to inspect a specific skill (e.g., 'glob', 'grep', 'read', 'write', 'edit'). If omitted, lists all skills.",
+          "Optional skill name to inspect a specific skill (e.g., 'execute', 'codebase_discovery', 'debugging', 'validation_of_work', 'react', 'vite', 'typescript', 'bash', 'glob', 'grep', 'read', 'write', 'edit'). If omitted, lists all skills.",
       },
     },
   },
@@ -65,11 +65,99 @@ export const browseSkillsTool: Tool = {
 
     if (results.length === 0) {
       return requestedSkill
-        ? `Error: Skill '${requestedSkill}' was not found. Suggestion: Call 'browse_skills' with no arguments to list all available tools (glob, grep, read, write, edit) and skills.`
-        : "No skills found under workspace or ~/.zero/skills directory. Available built-in tools are: glob, grep, read, write, edit.";
+        ? `Error: Skill '${requestedSkill}' was not found. Suggestion: Call 'skill_discovery' with no arguments to list all available tools and skills.`
+        : "No skills found under workspace or ~/.zero/skills directory. Available built-in tools are: skill_discovery, bash, glob, grep, read, write, edit.";
     }
 
     return `## Available Skills (${results.length} found):\n\n` + results.join("\n\n");
+  },
+};
+
+/**
+ * Bash tool: Execute shell commands sandboxed to the project workspace directory.
+ */
+export const bashTool: Tool = {
+  name: "bash",
+  description:
+    "Execute a shell command sandboxed within the project workspace (e.g. 'bun test', 'npm run build', 'tsc', 'git status').",
+  parameters: {
+    type: "object",
+    properties: {
+      command: {
+        type: "string",
+        description: "The shell command to execute.",
+      },
+      timeoutMs: {
+        type: "number",
+        description: "Optional execution timeout in milliseconds (defaults to 30000ms).",
+      },
+    },
+    required: ["command"],
+  },
+  execute: async (args: Record<string, any>): Promise<string> => {
+    const rawCommand = String(args.command || "").trim();
+    if (!rawCommand) {
+      return "Error: 'command' parameter is required for the bash tool. Suggestion: Provide a valid shell command, e.g. bash({ command: 'bun test' }).";
+    }
+
+    const timeout = typeof args.timeoutMs === "number" && args.timeoutMs > 0 ? args.timeoutMs : 30000;
+    const workspaceRoot = process.cwd();
+
+    try {
+      const isWindows = process.platform === "win32";
+      const shellCmd = isWindows
+        ? ["powershell.exe", "-NoProfile", "-Command", rawCommand]
+        : ["bash", "-c", rawCommand];
+
+      const startTime = Date.now();
+      const proc = Bun.spawn(shellCmd, {
+        cwd: workspaceRoot,
+        env: { ...process.env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      let timedOut = false;
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        try {
+          proc.kill();
+        } catch {
+          // Ignore
+        }
+      }, timeout);
+
+      const [stdoutText, stderrText] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+
+      const exitCode = await proc.exited;
+      clearTimeout(timeoutId);
+      const durationMs = Date.now() - startTime;
+
+      if (timedOut) {
+        return `Error: Command '${rawCommand}' timed out after ${timeout}ms. Suggestion: Break down long-running commands or specify a larger timeoutMs.`;
+      }
+
+      const outputParts: string[] = [];
+      if (stdoutText.trim()) {
+        outputParts.push(stdoutText.trimEnd());
+      }
+      if (stderrText.trim()) {
+        outputParts.push(`[stderr]\n${stderrText.trimEnd()}`);
+      }
+
+      const output = outputParts.length > 0 ? outputParts.join("\n\n") : "(no output)";
+
+      if (exitCode !== 0) {
+        return `[Command exited with code ${exitCode} (${durationMs}ms)]\n${output}\n\nSuggestion: If this is a test, build, or type failure, use the 'debugging' skill to isolate and fix the root cause, or use 'read' to inspect failing files.`;
+      }
+
+      return `[Command completed successfully (${durationMs}ms)]\n${output}`;
+    } catch (err: any) {
+      return `Error executing command '${rawCommand}': ${err.message || String(err)}. Suggestion: Check if the command binary is installed or verify command syntax.`;
+    }
   },
 };
 
@@ -105,7 +193,7 @@ export const globTool: Tool = {
     try {
       const stats = statSync(targetPath);
       if (stats.isFile()) {
-        const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/");
+        const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || targetPath;
         const parentDir = dirname(rel) || ".";
         return `Error: Path '${rel}' is a file, not a directory. Suggestion: Use the 'read' tool to view this file (read({ path: "${rel}" })), or search its directory with glob({ pattern: "${pattern}", path: "${parentDir}" }).`;
       }
@@ -429,7 +517,8 @@ export const editTool: Tool = {
  * Default coding & skill tools collection.
  */
 export const defaultTools: Tool[] = [
-  browseSkillsTool,
+  skillDiscoveryTool,
+  bashTool,
   globTool,
   grepTool,
   readTool,
@@ -483,12 +572,12 @@ export class ToolRegistry {
     const tool = this.get(name);
     if (!tool) {
       const availableNames = Array.from(this.tools.keys()).join(", ");
-      return `Error: Tool '${name}' is not recognized. Available tools: ${availableNames}. Suggestion: If you want to list/discover files, use 'glob' (e.g. glob({ pattern: "**/*" })). If you want to read a file, use 'read'. If you want to search code, use 'grep'. If you want to create a file, use 'write'. If you want to discover skills, use 'browse_skills'.`;
+      return `Error: Tool '${name}' is not recognized. Available tools: ${availableNames}. Suggestion: If you want to discover skills and workflows, use 'skill_discovery'. If you want to execute terminal commands (tests, builds, typecheck), use 'bash'. If you want to list/discover files, use 'glob'. If you want to read a file, use 'read'. If you want to search code, use 'grep'. If you want to create a file, use 'write'. If you want to edit a file, use 'edit'.`;
     }
     try {
       return await tool.execute(args);
     } catch (err: any) {
-      return `Error executing tool '${name}': ${err.message || String(err)}. Suggestion: Check your tool arguments or use 'browse_skills' to inspect the tool schema.`;
+      return `Error executing tool '${name}': ${err.message || String(err)}. Suggestion: Check your tool arguments or use 'skill_discovery' to inspect the tool schema.`;
     }
   }
 }

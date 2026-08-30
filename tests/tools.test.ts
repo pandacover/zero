@@ -2,19 +2,20 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  browseSkillsTool,
+  bashTool,
   defaultTools,
   editTool,
   globTool,
   grepTool,
   readTool,
+  skillDiscoveryTool,
   ToolRegistry,
   writeTool,
 } from "../src/tools.ts";
 
 const TEST_DIR = resolve("./.test_sandbox");
 
-describe("Coding Tools", () => {
+describe("Coding Tools & Skills Suite", () => {
   beforeEach(async () => {
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true, force: true });
@@ -27,9 +28,17 @@ describe("Coding Tools", () => {
     }
   });
 
-  it("browseSkillsTool discovers and lists YAML front-matters of all skills", async () => {
-    const res = await browseSkillsTool.execute({});
+  it("skillDiscoveryTool discovers and lists YAML front-matters of all skills", async () => {
+    const res = await skillDiscoveryTool.execute({});
     expect(res).toContain("Available Skills");
+    expect(res).toContain("execute");
+    expect(res).toContain("codebase_discovery");
+    expect(res).toContain("debugging");
+    expect(res).toContain("validation_of_work");
+    expect(res).toContain("react");
+    expect(res).toContain("vite");
+    expect(res).toContain("typescript");
+    expect(res).toContain("bash");
     expect(res).toContain("glob");
     expect(res).toContain("grep");
     expect(res).toContain("read");
@@ -37,14 +46,30 @@ describe("Coding Tools", () => {
     expect(res).toContain("edit");
 
     // Test specific skill query
-    const globRes = await browseSkillsTool.execute({ skillName: "glob" });
-    expect(globRes).toContain("Skill: [glob]");
-    expect(globRes).toContain("name: glob");
-    expect(globRes).not.toContain("Skill: [grep]");
+    const debugRes = await skillDiscoveryTool.execute({ skillName: "debugging" });
+    expect(debugRes).toContain("Skill: [debugging]");
+    expect(debugRes).toContain("name: debugging");
+    expect(debugRes).toContain("reproduce");
   });
 
-  it("verifies all skill files exist with valid front-matter", async () => {
-    const skillNames = ["glob", "grep", "read", "write", "edit"];
+  it("verifies all 14 skill files exist with valid front-matter and when_to_use", async () => {
+    const skillNames = [
+      "execute",
+      "skill_discovery",
+      "codebase_discovery",
+      "debugging",
+      "validation_of_work",
+      "react",
+      "vite",
+      "typescript",
+      "bash",
+      "glob",
+      "grep",
+      "read",
+      "write",
+      "edit",
+    ];
+
     for (const name of skillNames) {
       const skillPath = resolve(`skills/${name}/SKILL.md`);
       expect(existsSync(skillPath)).toBe(true);
@@ -53,7 +78,35 @@ describe("Coding Tools", () => {
       expect(content.startsWith("---")).toBe(true);
       expect(content).toContain(`name: ${name}`);
       expect(content).toContain("description:");
+      expect(content).toContain("when_to_use:");
     }
+  });
+
+  it("bashTool executes shell commands and captures stdout and exit status", async () => {
+    const res = await bashTool.execute({
+      command: "echo 'hello from bash tool'",
+    });
+
+    expect(res).toContain("Command completed successfully");
+    expect(res).toContain("hello from bash tool");
+  });
+
+  it("bashTool returns descriptive errors when a command fails", async () => {
+    const res = await bashTool.execute({
+      command: "node -e 'process.exit(1)'",
+    });
+
+    expect(res).toContain("Command exited with code 1");
+    expect(res).toContain("debugging");
+  });
+
+  it("bashTool enforces timeout limits on long running commands", async () => {
+    const res = await bashTool.execute({
+      command: "bun -e 'await new Promise(r => setTimeout(r, 2000))'",
+      timeoutMs: 100,
+    });
+
+    expect(res).toContain("timed out after 100ms");
   });
 
   it("writeTool creates directories and writes content", async () => {
@@ -174,13 +227,14 @@ describe("Coding Tools", () => {
 
   it("ToolRegistry registers tools and generates OpenAI JSON schemas", () => {
     const registry = new ToolRegistry(defaultTools);
-    expect(registry.getAll().length).toBe(6);
+    expect(registry.getAll().length).toBe(7);
 
     const openAITools = registry.toOpenAITools();
-    expect(openAITools.length).toBe(6);
+    expect(openAITools.length).toBe(7);
     expect(openAITools[0]?.type).toBe("function");
     expect(openAITools.map((t) => t.function.name)).toEqual([
-      "browse_skills",
+      "skill_discovery",
+      "bash",
       "glob",
       "grep",
       "read",
@@ -231,7 +285,7 @@ describe("Coding Tools", () => {
     const registry = new ToolRegistry(defaultTools);
     const unrecRes = await registry.execute("list_files", { dir: "." });
     expect(unrecRes).toContain("Tool 'list_files' is not recognized");
-    expect(unrecRes).toContain("Available tools: browse_skills, glob, grep, read, write, edit");
-    expect(unrecRes).toContain("Suggestion: If you want to list/discover files, use 'glob'");
+    expect(unrecRes).toContain("Available tools: skill_discovery, bash, glob, grep, read, write, edit");
+    expect(unrecRes).toContain("If you want to list/discover files, use 'glob'");
   });
 });

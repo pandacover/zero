@@ -46,7 +46,7 @@ function printBanner(): void {
   console.log("  \x1b[33m/new\x1b[0m      - Create a new session (inherits global default provider & model)");
   console.log("  \x1b[33m/sessions\x1b[0m - List and switch between saved sessions");
   console.log("  \x1b[33m/config\x1b[0m   - View active session and global default configuration");
-  console.log("  \x1b[33m/tools\x1b[0m    - View active coding tools (browse_skills, glob, grep, read, write, edit)");
+  console.log("  \x1b[33m/tools\x1b[0m    - View active coding tools (skill_discovery, bash, glob, grep, read, write, edit)");
   console.log("  \x1b[33m/history\x1b[0m  - View conversation history");
   console.log("  \x1b[33m/clear\x1b[0m    - Clear conversation memory of active session");
   console.log("  \x1b[33m/help\x1b[0m     - Show this help message");

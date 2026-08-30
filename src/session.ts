@@ -21,7 +21,7 @@ import type {
 } from "./types.ts";
 
 export const DEFAULT_SYSTEM_PROMPT =
-  "use browse_skills for if you think the request requires any particular skill or tool";
+  "use skill_discovery to discover capabilities and follow the execute workflow: understand -> explore (codebase_discovery) -> implement -> validate (validation_of_work) -> debug if errors (debugging) -> re-validate -> summarise.";
 
 function getSessionsBaseDir(): string {
   return join(getZeroDir(), "sessions");
