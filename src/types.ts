@@ -42,6 +42,46 @@ export interface Tool {
   execute: (args: Record<string, any>) => Promise<string> | string;
 }
 
+export type ToolStatus = "success" | "tool_error";
+
+export type OperationOutcome =
+  | "success"
+  | "failure"
+  | "timeout"
+  | "not_found"
+  | "mismatch"
+  | "invalid_target"
+  | "tool_error";
+
+export type ToolErrorType =
+  | "tool_invocation_error"
+  | "command_execution_error"
+  | "filesystem_error"
+  | "validation_error";
+
+export interface ToolExecutionDetails {
+  command: string;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+}
+
+export interface ToolResponse<T = any> {
+  toolStatus: ToolStatus;
+  outcome: OperationOutcome;
+  data?: T;
+  execution?: ToolExecutionDetails;
+  error?: {
+    type: ToolErrorType;
+    message: string;
+    details?: string;
+  };
+  suggestion?: string;
+  metadata?: Record<string, any>;
+}
+
 export interface ProviderConfig {
   name: string;
   baseURL: string;
@@ -68,7 +108,15 @@ export type AgentEvent =
   | { type: "think:start" }
   | { type: "think:complete"; thought: string; durationMs: number }
   | { type: "tool:start"; toolName: string; args: Record<string, any>; callId: string }
-  | { type: "tool:complete"; toolName: string; args: Record<string, any>; result: string; durationMs: number; callId: string }
+  | {
+      type: "tool:complete";
+      toolName: string;
+      args: Record<string, any>;
+      result: string;
+      durationMs: number;
+      callId: string;
+      parsed?: ToolResponse;
+    }
   | { type: "response:start" }
   | { type: "response:complete"; content: string; durationMs: number; usage?: TokenUsage }
   | { type: "error"; message: string; phase: "think" | "tool" | "response" | "model" }
@@ -102,6 +150,8 @@ export type TurnStep =
       result: string;
       durationMs: number;
       status: "success" | "error";
+      toolStatus?: ToolStatus;
+      outcome?: OperationOutcome;
     }
   | { type: "response"; content: string; durationMs: number; usage?: TokenUsage }
   | { type: "error"; message: string; phase: "think" | "tool" | "response" | "model" };

@@ -79,4 +79,11 @@ export class Spinner {
     console.log(`\x1b[34mℹ\x1b[0m ${msg}`);
     return this;
   }
+
+  warn(text?: string): this {
+    this.stop();
+    const msg = text ?? this.currentText;
+    console.log(`\x1b[33m⚠\x1b[0m ${msg}`);
+    return this;
+  }
 }

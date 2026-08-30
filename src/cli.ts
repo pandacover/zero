@@ -521,9 +521,52 @@ export async function runCLI(): Promise<void> {
           }
 
           case "tool:complete": {
-            spinner.succeed(`[${event.toolName}] completed (${event.durationMs}ms)`);
-            const snippet = event.result.length > 200 ? event.result.slice(0, 200) + "..." : event.result;
-            console.log(`\x1b[90m  Result: ${snippet.replace(/\n/g, "\n  ")}\x1b[0m\n`);
+            const parsed = event.parsed;
+            const isSuccess = parsed?.outcome === "success";
+            const isToolError = parsed?.toolStatus === "tool_error";
+
+            if (isToolError) {
+              spinner.fail(`[${event.toolName}] tool error (${event.durationMs}ms)`);
+              if (parsed?.error?.message) {
+                console.log(`\x1b[31m  Error: ${parsed.error.message}\x1b[0m`);
+              }
+              if (parsed?.suggestion) {
+                console.log(`\x1b[33m  Suggestion: ${parsed.suggestion}\x1b[0m\n`);
+              }
+            } else if (parsed?.outcome === "failure" || parsed?.outcome === "timeout") {
+              spinner.fail(`[${event.toolName}] ${parsed.outcome} (${event.durationMs}ms)`);
+              if (parsed.execution?.exitCode !== null && parsed.execution?.exitCode !== undefined) {
+                console.log(`\x1b[31m  Exit Code: ${parsed.execution.exitCode}\x1b[0m`);
+              }
+              if (parsed.execution?.stdout) {
+                const outSnippet = parsed.execution.stdout.length > 250
+                  ? parsed.execution.stdout.slice(0, 250) + "..."
+                  : parsed.execution.stdout;
+                console.log(`\x1b[90m  ${outSnippet.replace(/\n/g, "\n  ")}\x1b[0m`);
+              }
+              if (parsed.execution?.stderr) {
+                const errSnippet = parsed.execution.stderr.length > 250
+                  ? parsed.execution.stderr.slice(0, 250) + "..."
+                  : parsed.execution.stderr;
+                console.log(`\x1b[31m  ${errSnippet.replace(/\n/g, "\n  ")}\x1b[0m`);
+              }
+              if (parsed.suggestion) {
+                console.log(`\x1b[33m  Suggestion: ${parsed.suggestion}\x1b[0m\n`);
+              }
+            } else if (parsed?.outcome === "not_found" || parsed?.outcome === "mismatch" || parsed?.outcome === "invalid_target") {
+              spinner.warn(`[${event.toolName}] ${parsed.outcome} (${event.durationMs}ms)`);
+              if (parsed.error?.message) {
+                console.log(`\x1b[33m  Notice: ${parsed.error.message}\x1b[0m`);
+              }
+              if (parsed.suggestion) {
+                console.log(`\x1b[36m  Suggestion: ${parsed.suggestion}\x1b[0m\n`);
+              }
+            } else {
+              spinner.succeed(`[${event.toolName}] completed (${event.durationMs}ms)`);
+              const snippet = event.result.length > 200 ? event.result.slice(0, 200) + "..." : event.result;
+              console.log(`\x1b[90m  Result: ${snippet.replace(/\n/g, "\n  ")}\x1b[0m\n`);
+            }
+
             activeSession.recordTurnStep(turn.turnIndex, {
               type: "tool",
               toolName: event.toolName,
@@ -531,7 +574,9 @@ export async function runCLI(): Promise<void> {
               callId: event.callId,
               result: event.result,
               durationMs: event.durationMs,
-              status: "success",
+              status: isSuccess ? "success" : "error",
+              toolStatus: parsed?.toolStatus,
+              outcome: parsed?.outcome,
             });
             break;
           }

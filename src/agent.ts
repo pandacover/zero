@@ -134,10 +134,23 @@ export class Agent {
             if (toolRegistry) {
               result = await toolRegistry.execute(toolName, args);
             } else {
-              result = `Error: No tools registered in agent session.`;
+              result = JSON.stringify({
+                toolStatus: "tool_error",
+                outcome: "tool_error",
+                error: {
+                  type: "tool_invocation_error",
+                  message: "No tools registered in agent session.",
+                },
+              }, null, 2);
             }
 
             const toolDuration = Date.now() - toolStart;
+            let parsedResponse: any = undefined;
+            try {
+              parsedResponse = JSON.parse(result);
+            } catch {
+              // Ignore non-JSON
+            }
 
             // Emit completed tool event (stops loader and displays result in CLI)
             yield {
@@ -147,6 +160,7 @@ export class Agent {
               result,
               durationMs: toolDuration,
               callId: toolCall.id,
+              parsed: parsedResponse,
             };
 
             // Append tool response to message history

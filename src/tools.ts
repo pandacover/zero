@@ -1,7 +1,42 @@
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import type { Tool } from "./types.ts";
+import type {
+  OperationOutcome,
+  Tool,
+  ToolErrorType,
+  ToolExecutionDetails,
+  ToolResponse,
+  ToolStatus,
+} from "./types.ts";
+
+/**
+ * Standard factory helper to create deterministic ToolResponse JSON string payloads.
+ */
+export function createToolResponse<T = any>(params: {
+  toolStatus?: ToolStatus;
+  outcome: OperationOutcome;
+  data?: T;
+  execution?: ToolExecutionDetails;
+  error?: {
+    type: ToolErrorType;
+    message: string;
+    details?: string;
+  };
+  suggestion?: string;
+  metadata?: Record<string, any>;
+}): string {
+  const payload: ToolResponse<T> = {
+    toolStatus: params.toolStatus || (params.outcome === "tool_error" ? "tool_error" : "success"),
+    outcome: params.outcome,
+    ...(params.data !== undefined && { data: params.data }),
+    ...(params.execution && { execution: params.execution }),
+    ...(params.error && { error: params.error }),
+    ...(params.suggestion && { suggestion: params.suggestion }),
+    ...(params.metadata && { metadata: params.metadata }),
+  };
+  return JSON.stringify(payload, null, 2);
+}
 
 /**
  * Skill Discovery tool: Discover and inspect available skills and tools along with their YAML front-matter.
@@ -29,8 +64,8 @@ export const skillDiscoveryTool: Tool = {
 
     const requestedSkill = args.skillName ? String(args.skillName).trim().toLowerCase() : null;
     const seenSkills = new Set<string>();
-    const toolEntries: string[] = [];
-    const skillEntries: string[] = [];
+    const toolsCatalog: Array<{ name: string; description: string; frontMatter: string }> = [];
+    const skillsCatalog: Array<{ name: string; type: string; description: string; frontMatter: string }> = [];
     let fullSkillDoc: string | null = null;
 
     for (const skillsDir of candidateDirs) {
@@ -66,12 +101,24 @@ export const skillDiscoveryTool: Tool = {
               seenSkills.add(skillKey);
               const frontMatter = match[1].trim();
               const isTool = frontMatter.includes("type: tool") || frontMatter.includes("parameters:");
-              const formatted = `### Skill: [${skillFolder}]\n\`\`\`yaml\n${frontMatter}\n\`\`\``;
+              const descMatch = frontMatter.match(/description:\s*(.+)/);
+              const description = descMatch && descMatch[1] ? descMatch[1].trim() : "";
 
               if (isTool) {
-                toolEntries.push(formatted);
+                toolsCatalog.push({
+                  name: skillFolder,
+                  description,
+                  frontMatter,
+                });
               } else {
-                skillEntries.push(formatted);
+                const typeMatch = frontMatter.match(/type:\s*([a-zA-Z0-9_-]+)/);
+                const skillType = typeMatch && typeMatch[1] ? typeMatch[1].trim() : "process_skill";
+                skillsCatalog.push({
+                  name: skillFolder,
+                  type: skillType,
+                  description,
+                  frontMatter,
+                });
               }
             }
           } catch {
@@ -85,30 +132,36 @@ export const skillDiscoveryTool: Tool = {
 
     if (requestedSkill) {
       if (fullSkillDoc) {
-        return `## Skill Documentation: [${requestedSkill}]\n\n${fullSkillDoc}`;
+        return createToolResponse({
+          outcome: "success",
+          data: {
+            skillName: requestedSkill,
+            documentation: fullSkillDoc,
+          },
+        });
       }
-      return `Error: Skill '${requestedSkill}' was not found. Suggestion: Call 'skill_discovery' with no arguments to list all available tools and skills.`;
+      return createToolResponse({
+        outcome: "not_found",
+        data: { requestedSkill },
+        error: {
+          type: "validation_error",
+          message: `Skill '${requestedSkill}' was not found.`,
+        },
+        suggestion: "Call 'skill_discovery' with no arguments to list all available tools and skills.",
+      });
     }
 
-    const sections: string[] = [];
-    if (toolEntries.length > 0) {
-      sections.push(
-        `## Callable Tools (${toolEntries.length} tools callable directly in tool_calls):\n\n` +
-          toolEntries.join("\n\n")
-      );
-    }
-    if (skillEntries.length > 0) {
-      sections.push(
-        `## Process & Domain Skills (${skillEntries.length} guidelines - read via skill_discovery, do NOT invoke as tool calls):\n\n` +
-          skillEntries.join("\n\n")
-      );
-    }
-
-    if (sections.length === 0) {
-      return "No skills found under workspace or ~/.zero/skills directory. Available built-in tools are: skill_discovery, bash, glob, grep, read, write, edit.";
-    }
-
-    return sections.join("\n\n---\n\n");
+    return createToolResponse({
+      outcome: "success",
+      data: {
+        tools: toolsCatalog,
+        skills: skillsCatalog,
+      },
+      metadata: {
+        totalTools: toolsCatalog.length,
+        totalSkills: skillsCatalog.length,
+      },
+    });
   },
 };
 
@@ -136,7 +189,15 @@ export const bashTool: Tool = {
   execute: async (args: Record<string, any>): Promise<string> => {
     const rawCommand = String(args.command || "").trim();
     if (!rawCommand) {
-      return "Error: 'command' parameter is required for the bash tool. Suggestion: Provide a valid shell command, e.g. bash({ command: 'bun test' }).";
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "validation_error",
+          message: "'command' parameter is required for the bash tool.",
+        },
+        suggestion: "Provide a valid shell command, e.g. bash({ command: 'bun test' }).",
+      });
     }
 
     const timeout = typeof args.timeoutMs === "number" && args.timeoutMs > 0 ? args.timeoutMs : 30000;
@@ -175,27 +236,57 @@ export const bashTool: Tool = {
       clearTimeout(timeoutId);
       const durationMs = Date.now() - startTime;
 
+      const execution: ToolExecutionDetails = {
+        command: rawCommand,
+        exitCode: timedOut ? null : exitCode,
+        stdout: stdoutText.trimEnd(),
+        stderr: stderrText.trimEnd(),
+        durationMs,
+        timedOut,
+      };
+
       if (timedOut) {
-        return `Error: Command '${rawCommand}' timed out after ${timeout}ms. Suggestion: Break down long-running commands or specify a larger timeoutMs.`;
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "timeout",
+          execution,
+          error: {
+            type: "command_execution_error",
+            message: `Command '${rawCommand}' timed out after ${timeout}ms.`,
+          },
+          suggestion: "Break down long-running commands or specify a larger timeoutMs.",
+        });
       }
-
-      const outputParts: string[] = [];
-      if (stdoutText.trim()) {
-        outputParts.push(stdoutText.trimEnd());
-      }
-      if (stderrText.trim()) {
-        outputParts.push(`[stderr]\n${stderrText.trimEnd()}`);
-      }
-
-      const output = outputParts.length > 0 ? outputParts.join("\n\n") : "(no output)";
 
       if (exitCode !== 0) {
-        return `[Command exited with code ${exitCode} (${durationMs}ms)]\n${output}\n\nSuggestion: If this is a test, build, or type failure, use the 'debugging' skill to isolate and fix the root cause, or use 'read' to inspect failing files.`;
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "failure",
+          execution,
+          error: {
+            type: "command_execution_error",
+            message: `Command '${rawCommand}' exited with code ${exitCode}.`,
+          },
+          suggestion:
+            "If this is a test, build, or type failure, use the 'debugging' skill to isolate and fix the root cause, or use 'read' to inspect failing files.",
+        });
       }
 
-      return `[Command completed successfully (${durationMs}ms)]\n${output}`;
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "success",
+        execution,
+      });
     } catch (err: any) {
-      return `Error executing command '${rawCommand}': ${err.message || String(err)}. Suggestion: Check if the command binary is installed or verify command syntax.`;
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "tool_invocation_error",
+          message: `Error executing command '${rawCommand}': ${err.message || String(err)}`,
+        },
+        suggestion: "Check if the command binary is installed or verify command syntax.",
+      });
     }
   },
 };
@@ -226,7 +317,20 @@ export const globTool: Tool = {
 
     if (!existsSync(targetPath)) {
       const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
-      return `Error: Directory '${rel}' does not exist. Suggestion: Use glob({ pattern: "**/*" }) without a custom path to search from the workspace root, or check parent directories.`;
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "not_found",
+        data: {
+          path: rel,
+          pattern,
+        },
+        error: {
+          type: "filesystem_error",
+          message: `Directory '${rel}' does not exist.`,
+        },
+        suggestion:
+          "Use glob({ pattern: '**/*' }) without a custom path to search from the workspace root, or check parent directories.",
+      });
     }
 
     try {
@@ -234,7 +338,19 @@ export const globTool: Tool = {
       if (stats.isFile()) {
         const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || targetPath;
         const parentDir = dirname(rel) || ".";
-        return `Error: Path '${rel}' is a file, not a directory. Suggestion: Use the 'read' tool to view this file (read({ path: "${rel}" })), or search its directory with glob({ pattern: "${pattern}", path: "${parentDir}" }).`;
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "invalid_target",
+          data: {
+            path: rel,
+            targetType: "file",
+          },
+          error: {
+            type: "filesystem_error",
+            message: `Path '${rel}' is a file, not a directory.`,
+          },
+          suggestion: `Use the 'read' tool to view this file (read({ path: "${rel}" })), or search its directory with glob({ pattern: "${pattern}", path: "${parentDir}" }).`,
+        });
       }
 
       const glob = new Bun.Glob(pattern);
@@ -248,15 +364,43 @@ export const globTool: Tool = {
         }
       }
 
+      const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
+
       if (matches.length === 0) {
-        const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
-        return `No files matched pattern '${pattern}' in '${rel}'. Suggestion: Try a broader pattern like '**/*' or search for text contents across files using the 'grep' tool.`;
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "not_found",
+          data: {
+            path: rel,
+            pattern,
+            matches: [],
+            count: 0,
+          },
+          suggestion:
+            "Try a broader pattern like '**/*' or search for text contents across files using the 'grep' tool.",
+        });
       }
 
-      const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
-      return `Found ${matches.length} matches for '${pattern}' in '${rel}':\n${matches.join("\n")}`;
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "success",
+        data: {
+          path: rel,
+          pattern,
+          matches,
+          count: matches.length,
+        },
+      });
     } catch (err: any) {
-      return `Error scanning glob '${pattern}': ${err.message || String(err)}. Suggestion: Check if the pattern is valid glob syntax or use 'grep' to search content.`;
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "tool_invocation_error",
+          message: `Error scanning glob '${pattern}': ${err.message || String(err)}`,
+        },
+        suggestion: "Check if the pattern is valid glob syntax or use 'grep' to search content.",
+      });
     }
   },
 };
@@ -296,18 +440,38 @@ export const grepTool: Tool = {
     const caseSensitive = Boolean(args.caseSensitive);
 
     if (!pattern) {
-      return `Error: 'pattern' parameter is required for grep. Suggestion: Provide a keyword or regex pattern to search, e.g. grep({ pattern: "functionName" }).`;
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "validation_error",
+          message: "'pattern' parameter is required for grep.",
+        },
+        suggestion: "Provide a keyword or regex pattern to search, e.g. grep({ pattern: 'functionName' }).",
+      });
     }
 
     if (!existsSync(targetPath)) {
       const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
-      return `Error: Path '${rel}' does not exist. Suggestion: Use 'glob' to discover valid directory paths or search from workspace root with grep({ pattern: "${pattern}", path: "." }).`;
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "not_found",
+        data: {
+          path: rel,
+          pattern,
+        },
+        error: {
+          type: "filesystem_error",
+          message: `Path '${rel}' does not exist.`,
+        },
+        suggestion: `Use 'glob' to discover valid directory paths or search from workspace root with grep({ pattern: "${pattern}", path: "." }).`,
+      });
     }
 
     try {
       const flags = caseSensitive ? "g" : "gi";
       const regex = new RegExp(pattern, flags);
-      const results: string[] = [];
+      const matches: Array<{ file: string; line: number; content: string }> = [];
 
       const stats = statSync(targetPath);
       const filesToSearch: string[] = [];
@@ -318,7 +482,6 @@ export const grepTool: Tool = {
         const globFilter = includePattern ? includePattern : "**/*";
         const glob = new Bun.Glob(globFilter);
         for (const relFile of glob.scanSync({ cwd: targetPath, onlyFiles: true })) {
-          // Skip node_modules and .git by default
           if (relFile.includes("node_modules") || relFile.includes(".git")) {
             continue;
           }
@@ -327,10 +490,7 @@ export const grepTool: Tool = {
       }
 
       for (const fullPath of filesToSearch) {
-        if (results.length >= 100) {
-          results.push("... (results capped at 100 matches)");
-          break;
-        }
+        if (matches.length >= 100) break;
 
         try {
           const content = await Bun.file(fullPath).text();
@@ -341,8 +501,12 @@ export const grepTool: Tool = {
             const line = lines[i]!;
             regex.lastIndex = 0;
             if (regex.test(line)) {
-              results.push(`${relPath}:${i + 1}: ${line.trimEnd()}`);
-              if (results.length >= 100) break;
+              matches.push({
+                file: relPath,
+                line: i + 1,
+                content: line.trimEnd(),
+              });
+              if (matches.length >= 100) break;
             }
           }
         } catch {
@@ -351,13 +515,42 @@ export const grepTool: Tool = {
       }
 
       const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
-      if (results.length === 0) {
-        return `No matches found for '${pattern}' in '${rel}'. Suggestion: Try case-insensitive search (caseSensitive: false), simplify the regex/pattern, or use 'glob' to find files and 'read' to inspect them.`;
+      if (matches.length === 0) {
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "not_found",
+          data: {
+            path: rel,
+            pattern,
+            matches: [],
+            count: 0,
+          },
+          suggestion:
+            "Try case-insensitive search (caseSensitive: false), simplify the regex/pattern, or use 'glob' to find files and 'read' to inspect them.",
+        });
       }
 
-      return `Found ${results.length} matches for '${pattern}' in '${rel}':\n${results.join("\n")}`;
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "success",
+        data: {
+          path: rel,
+          pattern,
+          matches,
+          count: matches.length,
+        },
+      });
     } catch (err: any) {
-      return `Error in grep '${pattern}': ${err.message || String(err)}. Suggestion: If pattern is a complex regex, try a simpler literal string or verify regex escape characters.`;
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "tool_invocation_error",
+          message: `Error in grep '${pattern}': ${err.message || String(err)}`,
+        },
+        suggestion:
+          "If pattern is a complex regex, try a simpler literal string or verify regex escape characters.",
+      });
     }
   },
 };
@@ -389,7 +582,15 @@ export const readTool: Tool = {
   execute: async (args: Record<string, any>): Promise<string> => {
     const rawPath = String(args.path || "").trim();
     if (!rawPath) {
-      return "Error: 'path' parameter is required for the read tool. Suggestion: Provide a file path, e.g. read({ path: 'src/index.ts' }).";
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "validation_error",
+          message: "'path' parameter is required for the read tool.",
+        },
+        suggestion: "Provide a file path, e.g. read({ path: 'src/index.ts' }).",
+      });
     }
 
     const filePath = resolve(rawPath);
@@ -397,27 +598,73 @@ export const readTool: Tool = {
 
     if (!existsSync(filePath)) {
       const fileBase = basename(filePath);
-      return `Error: File '${relPath}' does not exist. Suggestion: Use the 'glob' tool (e.g. glob({ pattern: "**/*${fileBase}*" }) or glob({ pattern: "**/*" })) to find the correct file path.`;
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "not_found",
+        data: {
+          path: relPath,
+        },
+        error: {
+          type: "filesystem_error",
+          message: `File '${relPath}' does not exist.`,
+        },
+        suggestion: `Use the 'glob' tool (e.g. glob({ pattern: "**/*${fileBase}*" }) or glob({ pattern: "**/*" })) to find the correct file path.`,
+      });
     }
 
     try {
       const stats = statSync(filePath);
       if (stats.isDirectory()) {
-        return `Error: '${relPath}' is a directory, not a file. The 'read' tool can only read files. Suggestion: Use the 'glob' tool to inspect directory contents (e.g. glob({ pattern: "**/*", path: "${relPath}" })).`;
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "invalid_target",
+          data: {
+            path: relPath,
+            targetType: "directory",
+          },
+          error: {
+            type: "filesystem_error",
+            message: `'${relPath}' is a directory, not a file. The 'read' tool can only read files.`,
+          },
+          suggestion: `Use the 'glob' tool to inspect directory contents (e.g. glob({ pattern: "**/*", path: "${relPath}" })).`,
+        });
       }
 
       const content = await Bun.file(filePath).text();
       const lines = content.split(/\r?\n/);
 
       if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) {
-        return `[File: ${relPath} is empty (0 lines)]`;
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "success",
+          data: {
+            path: relPath,
+            content: "[File is empty (0 lines)]",
+            startLine: 1,
+            endLine: 0,
+            totalLines: 0,
+          },
+        });
       }
 
       const start = args.startLine ? Math.max(1, Math.floor(Number(args.startLine))) : 1;
       const end = args.endLine ? Math.min(lines.length, Math.floor(Number(args.endLine))) : lines.length;
 
       if (start > lines.length) {
-        return `Error: startLine ${start} exceeds total lines (${lines.length}) in '${relPath}'. Suggestion: Read lines 1-${Math.min(lines.length, 100)} instead.`;
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "mismatch",
+          data: {
+            path: relPath,
+            totalLines: lines.length,
+            requestedStartLine: start,
+          },
+          error: {
+            type: "validation_error",
+            message: `startLine ${start} exceeds total lines (${lines.length}) in '${relPath}'.`,
+          },
+          suggestion: `Read lines 1-${Math.min(lines.length, 100)} instead.`,
+        });
       }
 
       const formattedLines: string[] = [];
@@ -426,9 +673,27 @@ export const readTool: Tool = {
         formattedLines.push(`${lineNum} | ${lines[i - 1]}`);
       }
 
-      return `[File: ${relPath} (Lines ${start}-${end} of ${lines.length})]\n` + formattedLines.join("\n");
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "success",
+        data: {
+          path: relPath,
+          content: formattedLines.join("\n"),
+          startLine: start,
+          endLine: end,
+          totalLines: lines.length,
+        },
+      });
     } catch (err: any) {
-      return `Error reading file '${relPath}': ${err.message || String(err)}. Suggestion: Check permissions or verify if the file is binary.`;
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "filesystem_error",
+          message: `Error reading file '${relPath}': ${err.message || String(err)}`,
+        },
+        suggestion: "Check permissions or verify if the file is binary.",
+      });
     }
   },
 };
@@ -457,7 +722,15 @@ export const writeTool: Tool = {
   execute: async (args: Record<string, any>): Promise<string> => {
     const rawPath = String(args.path || "").trim();
     if (!rawPath) {
-      return "Error: 'path' parameter is required for the write tool. Suggestion: Provide a file path, e.g. write({ path: 'src/app.ts', content: '...' }).";
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "validation_error",
+          message: "'path' parameter is required for the write tool.",
+        },
+        suggestion: "Provide a file path, e.g. write({ path: 'src/app.ts', content: '...' }).",
+      });
     }
 
     const filePath = resolve(rawPath);
@@ -468,7 +741,19 @@ export const writeTool: Tool = {
       if (existsSync(filePath)) {
         const stats = statSync(filePath);
         if (stats.isDirectory()) {
-          return `Error: Cannot write to '${relPath}' because it is an existing directory. Suggestion: Specify a filename inside this directory, e.g. write({ path: "${relPath}/filename.ext", content: "..." }).`;
+          return createToolResponse({
+            toolStatus: "success",
+            outcome: "invalid_target",
+            data: {
+              path: relPath,
+              targetType: "directory",
+            },
+            error: {
+              type: "filesystem_error",
+              message: `Cannot write to '${relPath}' because it is an existing directory.`,
+            },
+            suggestion: `Specify a filename inside this directory, e.g. write({ path: "${relPath}/filename.ext", content: "..." }).`,
+          });
         }
       }
 
@@ -478,9 +763,24 @@ export const writeTool: Tool = {
       }
 
       const bytes = await Bun.write(filePath, content);
-      return `Successfully wrote ${bytes} bytes to '${relPath}'.`;
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "success",
+        data: {
+          path: relPath,
+          bytesWritten: bytes,
+        },
+      });
     } catch (err: any) {
-      return `Error writing file '${relPath}': ${err.message || String(err)}. Suggestion: Verify file permissions and path validity.`;
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "filesystem_error",
+          message: `Error writing file '${relPath}': ${err.message || String(err)}`,
+        },
+        suggestion: "Verify file permissions and path validity.",
+      });
     }
   },
 };
@@ -512,7 +812,16 @@ export const editTool: Tool = {
   execute: async (args: Record<string, any>): Promise<string> => {
     const rawPath = String(args.path || "").trim();
     if (!rawPath) {
-      return "Error: 'path' parameter is required for the edit tool. Suggestion: Provide a file path, e.g. edit({ path: 'src/index.ts', oldString: '...', newString: '...' }).";
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "validation_error",
+          message: "'path' parameter is required for the edit tool.",
+        },
+        suggestion:
+          "Provide a file path, e.g. edit({ path: 'src/index.ts', oldString: '...', newString: '...' }).",
+      });
     }
 
     const filePath = resolve(rawPath);
@@ -521,33 +830,96 @@ export const editTool: Tool = {
     const newString = String(args.newString ?? "");
 
     if (!existsSync(filePath)) {
-      return `Error: File '${relPath}' does not exist. If you want to create a new file, use the 'write' tool instead: write({ path: "${relPath}", content: "..." }).`;
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "not_found",
+        data: {
+          path: relPath,
+        },
+        error: {
+          type: "filesystem_error",
+          message: `File '${relPath}' does not exist.`,
+        },
+        suggestion: `If you want to create a new file, use the 'write' tool instead: write({ path: "${relPath}", content: "..." }).`,
+      });
     }
 
     try {
       const stats = statSync(filePath);
       if (stats.isDirectory()) {
-        return `Error: '${relPath}' is a directory, not a file. The 'edit' tool can only edit files. Suggestion: Use 'glob' to list files or 'read' to inspect a specific file.`;
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "invalid_target",
+          data: {
+            path: relPath,
+            targetType: "directory",
+          },
+          error: {
+            type: "filesystem_error",
+            message: `'${relPath}' is a directory, not a file. The 'edit' tool can only edit files.`,
+          },
+          suggestion: "Use 'glob' to list files or 'read' to inspect a specific file.",
+        });
       }
 
       const content = await Bun.file(filePath).text();
 
       if (!content.includes(oldString)) {
-        return `Error: The oldString was not found in '${relPath}'. Suggestion: Use the 'read' tool (read({ path: "${relPath}" })) to inspect the exact lines, whitespace, and formatting of the file before editing.`;
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "mismatch",
+          data: {
+            path: relPath,
+            occurrences: 0,
+          },
+          error: {
+            type: "filesystem_error",
+            message: `The oldString was not found in '${relPath}'.`,
+          },
+          suggestion: `Use the 'read' tool (read({ path: "${relPath}" })) to inspect the exact lines, whitespace, and formatting of the file before editing.`,
+        });
       }
 
       // Check occurrences
       const occurrences = content.split(oldString).length - 1;
       if (occurrences > 1) {
-        return `Error: The oldString matched ${occurrences} occurrences in '${relPath}'. Suggestion: Use 'read' to inspect the surrounding lines and include more lines in oldString to uniquely identify the replacement chunk.`;
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "mismatch",
+          data: {
+            path: relPath,
+            occurrences,
+          },
+          error: {
+            type: "filesystem_error",
+            message: `The oldString matched ${occurrences} occurrences in '${relPath}'.`,
+          },
+          suggestion:
+            "Use 'read' to inspect the surrounding lines and include more lines in oldString to uniquely identify the replacement chunk.",
+        });
       }
 
       const updatedContent = content.replace(oldString, newString);
       await Bun.write(filePath, updatedContent);
 
-      return `Successfully updated '${relPath}'.`;
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "success",
+        data: {
+          path: relPath,
+          message: `Successfully updated '${relPath}'.`,
+        },
+      });
     } catch (err: any) {
-      return `Error editing file '${relPath}': ${err.message || String(err)}. Suggestion: Check file permissions or use the 'read' tool to verify file contents.`;
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "filesystem_error",
+          message: `Error editing file '${relPath}': ${err.message || String(err)}`,
+        },
+        suggestion: "Check file permissions or use the 'read' tool to verify file contents.",
+      });
     }
   },
 };
@@ -621,16 +993,48 @@ export class ToolRegistry {
       ];
 
       if (knownSkills.includes(name.toLowerCase())) {
-        return `Error: '${name}' is a process/domain skill, NOT a callable tool. To inspect the guidelines for '${name}', call: skill_discovery({ skillName: "${name}" }). Available callable tools are: skill_discovery, bash, glob, grep, read, write, edit.`;
+        return createToolResponse({
+          toolStatus: "tool_error",
+          outcome: "tool_error",
+          data: {
+            attemptedName: name,
+            type: "process_skill",
+          },
+          error: {
+            type: "tool_invocation_error",
+            message: `'${name}' is a process/domain skill, NOT a callable tool.`,
+          },
+          suggestion: `To inspect the guidelines for '${name}', call: skill_discovery({ skillName: "${name}" }). Available callable tools are: skill_discovery, bash, glob, grep, read, write, edit.`,
+        });
       }
 
       const availableNames = Array.from(this.tools.keys()).join(", ");
-      return `Error: Tool '${name}' is not recognized. Available tools: ${availableNames}. Suggestion: If you want to discover skills and workflows, use 'skill_discovery'. If you want to execute terminal commands (tests, builds, typecheck), use 'bash'. If you want to list/discover files, use 'glob'. If you want to read a file, use 'read'. If you want to search code, use 'grep'. If you want to create a file, use 'write'. If you want to edit a file, use 'edit'.`;
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        data: {
+          attemptedName: name,
+        },
+        error: {
+          type: "tool_invocation_error",
+          message: `Tool '${name}' is not recognized.`,
+        },
+        suggestion: `Available tools: ${availableNames}. Suggestion: If you want to discover skills and workflows, use 'skill_discovery'. If you want to execute terminal commands (tests, builds, typecheck), use 'bash'. If you want to list/discover files, use 'glob'. If you want to read a file, use 'read'. If you want to search code, use 'grep'. If you want to create a file, use 'write'. If you want to edit a file, use 'edit'.`,
+      });
     }
+
     try {
       return await tool.execute(args);
     } catch (err: any) {
-      return `Error executing tool '${name}': ${err.message || String(err)}. Suggestion: Check your tool arguments or use 'skill_discovery' to inspect the tool schema.`;
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "tool_invocation_error",
+          message: `Error executing tool '${name}': ${err.message || String(err)}`,
+        },
+        suggestion: "Check your tool arguments or use 'skill_discovery' to inspect the tool schema.",
+      });
     }
   }
 }
