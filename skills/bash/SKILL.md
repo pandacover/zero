@@ -1,7 +1,7 @@
 ---
 name: bash
 type: tool
-description: Execute shell commands sandboxed within the project workspace directory.
+description: Execute shell commands sandboxed within the project workspace directory. File creation and editing via bash is prohibited (use 'write' or 'edit' instead).
 when_to_use:
   - Running build commands (e.g. 'npm run build', 'vite build', 'bun build').
   - Running test suites (e.g. 'bun test', 'npm test', 'vitest', 'jest').
@@ -22,6 +22,17 @@ parameters:
 # Bash Skill
 
 Use the `bash` tool to execute terminal commands sandboxed to the project's root directory.
+
+---
+
+## ⛔ Strict Constraint: No File Creation or Editing via Bash
+
+- **Do NOT use `bash` to create or edit files.**
+- Commands such as `echo "..." > file`, `echo "..." >> file`, `cat << EOF > file`, `touch file`, `tee file`, or `sed -i` are **strictly prohibited** in the `bash` tool.
+- **Dedicated Tools**:
+  - To create or overwrite a file: Use the **`write`** tool.
+  - To modify an existing file: Use the **`edit`** tool.
+- Attempting to create or modify files via `bash` will fail execution and direct you to the `write` or `edit` tool.
 
 ---
 

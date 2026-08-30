@@ -149,6 +149,60 @@ describe("Coding Tools & Skills Suite", () => {
     expect(res.execution?.stdout).toContain("second line");
   });
 
+  it("bashTool rejects file creation and editing attempts and directs agent to write or edit tools", async () => {
+    // 1. Output redirection >
+    const redirectRes: ToolResponse = JSON.parse(
+      await bashTool.execute({ command: "echo 'hello' > src/index.ts" })
+    );
+    expect(redirectRes.toolStatus).toBe("tool_error");
+    expect(redirectRes.outcome).toBe("tool_error");
+    expect(redirectRes.error?.message).toContain("Redirecting output to a file");
+    expect(redirectRes.error?.message).toContain("write");
+    expect(redirectRes.error?.message).toContain("edit");
+
+    // 2. Output append >>
+    const appendRes: ToolResponse = JSON.parse(
+      await bashTool.execute({ command: "echo 'export const x = 1;' >> src/index.ts" })
+    );
+    expect(appendRes.toolStatus).toBe("tool_error");
+    expect(appendRes.outcome).toBe("tool_error");
+    expect(appendRes.error?.message).toContain("Redirecting output to a file");
+
+    // 3. Touch command
+    const touchRes: ToolResponse = JSON.parse(
+      await bashTool.execute({ command: "touch src/types.ts" })
+    );
+    expect(touchRes.toolStatus).toBe("tool_error");
+    expect(touchRes.outcome).toBe("tool_error");
+    expect(touchRes.error?.message).toContain("touch");
+    expect(touchRes.error?.message).toContain("write");
+
+    // 4. Heredoc writing
+    const heredocRes: ToolResponse = JSON.parse(
+      await bashTool.execute({ command: "cat << 'EOF' > file.txt\nsome content\nEOF" })
+    );
+    expect(heredocRes.toolStatus).toBe("tool_error");
+    expect(heredocRes.outcome).toBe("tool_error");
+    expect(heredocRes.error?.message).toContain("write");
+
+    // 5. In-place sed editing
+    const sedRes: ToolResponse = JSON.parse(
+      await bashTool.execute({ command: "sed -i 's/foo/bar/g' file.txt" })
+    );
+    expect(sedRes.toolStatus).toBe("tool_error");
+    expect(sedRes.outcome).toBe("tool_error");
+    expect(sedRes.error?.message).toContain("sed -i");
+    expect(sedRes.error?.message).toContain("edit");
+
+    // 6. Inline node fs file writing
+    const fsRes: ToolResponse = JSON.parse(
+      await bashTool.execute({ command: "node -e 'fs.writeFileSync(\"a.txt\", \"b\")'" })
+    );
+    expect(fsRes.toolStatus).toBe("tool_error");
+    expect(fsRes.outcome).toBe("tool_error");
+    expect(fsRes.error?.message).toContain("write");
+  });
+
   it("writeTool creates directories and writes content with structured response", async () => {
     const testFile = `${TEST_DIR}/nested/hello.txt`;
     const rawRes = await writeTool.execute({

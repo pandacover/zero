@@ -201,13 +201,76 @@ export function resolveBashExecutable(): string | null {
 }
 
 /**
+ * Detects whether a shell command attempts to create or edit files on disk.
+ * File creation and editing must be performed via the dedicated 'write' and 'edit' tools.
+ */
+export function isDisallowedBashFileWrite(command: string): { isDisallowed: boolean; reason?: string } {
+  // 1. Check for file creation / inline editing tools
+  if (/\btouch\s+/i.test(command)) {
+    return {
+      isDisallowed: true,
+      reason: "Creating files via 'touch' in bash is prohibited. Use the 'write' tool to create files.",
+    };
+  }
+
+  if (/\btee(\s+|$)/i.test(command)) {
+    return {
+      isDisallowed: true,
+      reason: "Writing to files via 'tee' in bash is prohibited. Use the 'write' tool to create files or 'edit' to modify them.",
+    };
+  }
+
+  if (/\bsed\s+-[a-zA-Z]*i/i.test(command)) {
+    return {
+      isDisallowed: true,
+      reason: "In-place file editing via 'sed -i' in bash is prohibited. Use the 'edit' tool to modify files.",
+    };
+  }
+
+  if (/cat\s+<<\s*['"]?([A-Za-z0-9_-]+)['"]?/i.test(command)) {
+    return {
+      isDisallowed: true,
+      reason: "Writing file contents via heredocs ('cat << EOF') in bash is prohibited. Use the 'write' tool instead.",
+    };
+  }
+
+  if (/\b(fs\.(writeFile|writeFileSync|appendFile|appendFileSync)|Bun\.write)\b/i.test(command)) {
+    return {
+      isDisallowed: true,
+      reason: "Creating or modifying files via inline node/bun scripts in bash is prohibited. Use the 'write' or 'edit' tool instead.",
+    };
+  }
+
+  // 2. Check for output redirections (> or >>) to files
+  const redirectMatches = command.matchAll(/(?<![=-])(?:>{1,2})\s*([^\s;&|]+)/g);
+  for (const match of redirectMatches) {
+    const target = (match[1] || "").toLowerCase().trim();
+    if (
+      target === "/dev/null" ||
+      target === "nul" ||
+      target === "&1" ||
+      target === "&2" ||
+      target.startsWith("&")
+    ) {
+      continue;
+    }
+    return {
+      isDisallowed: true,
+      reason: `Redirecting output to a file ('${match[0]}') in bash is prohibited. Use the 'write' tool to create or overwrite files, or the 'edit' tool to modify files.`,
+    };
+  }
+
+  return { isDisallowed: false };
+}
+
+/**
  * Bash tool: Execute shell commands sandboxed to the project workspace directory.
  * Fully OS-agnostic: executes with full POSIX Bash semantics across Windows, macOS, and Linux.
  */
 export const bashTool: Tool = {
   name: "bash",
   description:
-    "Execute a shell command sandboxed within the project workspace (e.g. 'bun test', 'npm run build', 'tsc', 'git status'). OS-agnostic: resolves POSIX Bash syntax across Windows, Linux, and macOS.",
+    "Execute a shell command sandboxed within the project workspace (e.g. 'bun test', 'npm run build', 'tsc', 'git status'). OS-agnostic: resolves POSIX Bash syntax across Windows, Linux, and macOS. Creating or modifying files via bash is prohibited (use 'write' or 'edit' instead).",
   parameters: {
     type: "object",
     properties: {
@@ -231,6 +294,18 @@ export const bashTool: Tool = {
         error: {
           type: "validation_error",
           message: "'command' parameter is required for the bash tool.",
+        },
+      });
+    }
+
+    const check = isDisallowedBashFileWrite(rawCommand);
+    if (check.isDisallowed) {
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "tool_invocation_error",
+          message: check.reason || "File creation and editing via the bash tool is prohibited. Use the 'write' tool to create files and the 'edit' tool to modify files.",
         },
       });
     }
