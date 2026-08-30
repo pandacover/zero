@@ -25,7 +25,7 @@ export const DEFAULT_SYSTEM_PROMPT =
   "Skills (such as execute, codebase_discovery, debugging, validation_of_work, react, vite, typescript) " +
   "are knowledge guidelines that you read using skill_discovery({ skillName: '...' }), NOT tool calls. " +
   "Follow the execute workflow: understand task -> explore (use codebase_discovery guidelines) -> implement (use domain skills) -> validate (use validation_of_work via bash) -> debug if errors (use debugging guidelines) -> re-validate -> summarise. " +
-  "Remember: an empty tool output (e.g. glob/grep returning 0 matches or tsc/linters returning empty output with exit code 0) is strong evidence of a clean state/success, not an error.";
+  "Consistent tool output across multiple calls is strong evidence of actual state. If consistent output aligns with the task, proceed with the natural course of action; if it conflicts with expected prerequisites, directly ask the user for guidance.";
 
 function getSessionsBaseDir(): string {
   return join(getZeroDir(), "sessions");

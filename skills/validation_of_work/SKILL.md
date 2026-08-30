@@ -18,12 +18,11 @@ Never mark a task complete without rigorous, multi-layer verification.
 
 ---
 
-## ⚡ Core Principle: Empty Output is Strong Evidence of Success, NOT Failure
+## ⚡ Core Principle: Consistent Clean Output Across Validation Checks
 
-> **CRITICAL RULE**: In validation and compilation tools, an empty error stream (`stderr: ""`, no errors printed, exit code 0) is **the strongest possible evidence of success, NOT a malfunction**.
->
-> - When `bash({ command: "bunx tsc --noEmit" })` finishes with exit code 0 and empty output, it means **zero type errors exist in the codebase**. This is the definition of complete type safety.
-> - When `bash({ command: "git status" })` shows working tree clean, it confirms no unstaged or rogue modifications exist.
+- An isolated single run might mask issues if a test target or configuration was missed.
+- **Consistency is key**: When multiple complementary validation tools (e.g. `tsc --noEmit` returning exitCode 0 with no errors, test runner reporting 100% pass rate, and `git status` showing expected clean changes) **consistently confirm clean results**, that is **strong evidence of success**.
+- If validation results consistently confirm success and match task expectations, proceed with the natural completion summary. If results contradict user prerequisites, directly ask the user.
 
 ---
 

@@ -20,19 +20,20 @@ tools_used:
 
 ---
 
-## ⚡ Core Principle: Empty Output is Strong Evidence of State, NOT Failure
+## ⚡ Core Principle: Consistent Empty Output Across Multiple Tool Calls
 
-> **CRITICAL RULE**: An empty or zero-count tool output (e.g. `matches: []`, `count: 0`) is **strong, conclusive evidence of accurate state observation, NOT an error or failure**.
->
-> - When `glob({ pattern: "**/*" })` returns `matches: []` with `count: 0`, this conclusively proves that the current working directory is a **clean, empty workspace ready for project initialization**. Do NOT assume the tool malfunctioned or that files are hidden. Proceed directly with creating the project structure or files.
-> - When `glob` or `grep` returns 0 matches for a specific filename or symbol, it confirms that the target file/symbol does not exist in the searched path.
+- A single empty tool output (e.g. `matches: []`, `count: 0`) might simply reflect an overly specific pattern or subfolder.
+- **Consistency is key**: If multiple tool calls (e.g. `glob({ pattern: "**/*" })` from the workspace root) **consistently return empty results**, that is **strong evidence of a clean/empty workspace**, not a tool malfunction or failure.
+- **How to proceed upon consistent empty output**:
+  - **Natural Course of Action**: If the user's task is to create, scaffold, or initialize a new project/feature, treat the empty directory as the expected starting state and proceed with project creation.
+  - **Ask the User**: If the user asked to modify, refactor, or debug an existing codebase that was expected to contain files, communicate the empty state directly to the user and ask for guidance or clarification on the target path.
 
 ---
 
 ## 4-Step Discovery Process:
 
 ### 1. Inspect Project Manifests & Configs
-- Use `glob({ pattern: "**/*" })` to check existing files. If `count: 0`, conclude immediately that the directory is empty and proceed with project scaffolding.
+- Use `glob({ pattern: "**/*" })` to check existing files. If consistently empty, follow the decision rule above (proceed with scaffolding or ask user).
 - Read `package.json` with `read` to understand dependencies, frameworks, scripts, and runtime environment.
 - Read `tsconfig.json` to understand TypeScript compiler options, target, paths, and module resolution.
 - Read build tool configs (`vite.config.ts`, `next.config.js`, etc.) to understand bundling and path aliases.

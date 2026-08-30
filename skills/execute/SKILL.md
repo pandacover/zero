@@ -14,13 +14,13 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 
 ---
 
-## ⚡ Foundational Rule: Empty Tool Output is Evidence of Success or Clean State
+## ⚡ Core Principle: Evaluating Consistent Tool Outputs
 
-> **CRITICAL RULE**: An empty or zero-count tool output (e.g. `matches: []`, `count: 0`, empty stderr, exit code 0) is **strong evidence of success or accurate state observation, NOT an error**.
-> - An empty directory from `glob` means a clean workspace ready for new project creation.
-> - An empty result from `tsc --noEmit` means zero type errors.
-> - 0 matches from `grep` for a removed bug means the bug is completely gone.
-> Do NOT second-guess or assume tools failed when receiving empty/zero outputs.
+- An isolated empty tool output can be ambiguous. Verify state through consistent tool invocations (e.g. broad `glob` search or root path checks).
+- **Consistency is key**: When tool outputs are **consistent across multiple calls**, that provides **strong evidence of the actual state** (e.g., clean empty workspace, zero remaining bug occurrences, or zero compilation errors).
+- **Decision Rule**:
+  1. **Proceed Naturally**: If the consistent state aligns with the user's objective (e.g. starting a new project in an empty folder, or verifying that all tests pass), proceed with the natural course of action.
+  2. **Ask the User**: If the consistent state conflicts with prerequisites (e.g. expected an existing repository to modify but the workspace is consistently empty), explain the observed state clearly and ask the user for guidance.
 
 ---
 
@@ -50,7 +50,7 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 
 ### Step 2: Explore the Codebase (`codebase_discovery`)
 - Read `skills/codebase_discovery/SKILL.md` via `skill_discovery({ skillName: "codebase_discovery" })`.
-- Run `glob({ pattern: "**/*" })`. If `matches: []` (count: 0), recognize that the workspace is empty and proceed directly with project creation.
+- Run `glob({ pattern: "**/*" })`. If consistently empty across checks, evaluate decision path (proceed with project creation if new project, or ask user if existing project expected).
 - If files exist, locate configuration manifests (`package.json`, `tsconfig.json`, `vite.config.ts`) and entry points.
 - Read relevant lines with `read` to build a mental map of existing patterns before making changes.
 
@@ -60,7 +60,7 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 
 ### Step 4: Validate the Work (`validation_of_work`)
 - Read `skills/validation_of_work/SKILL.md` via `skill_discovery({ skillName: "validation_of_work" })`.
-- Run type checking: `bash({ command: "bunx tsc --noEmit" })`. (Empty output + exit 0 = 0 type errors).
+- Run type checking: `bash({ command: "bunx tsc --noEmit" })`.
 - Run automated tests: `bash({ command: "bun test" })` or `bash({ command: "npm test" })`.
 - Check build integrity: `bash({ command: "npm run build" })`.
 
