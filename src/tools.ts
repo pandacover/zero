@@ -1,3 +1,4 @@
+import { $ } from "bun";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
@@ -163,12 +164,50 @@ export const skillDiscoveryTool: Tool = {
 };
 
 /**
+ * Resolves a native POSIX Bash/sh executable across Unix, Linux, macOS, and Windows.
+ */
+export function resolveBashExecutable(): string | null {
+  if (process.platform !== "win32") {
+    const unixPaths = ["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash", "/bin/sh", "/usr/bin/sh"];
+    for (const p of unixPaths) {
+      if (existsSync(p)) return p;
+    }
+    return "bash";
+  }
+
+  // Windows candidate locations for Git Bash / MSYS / Cygwin / WSL
+  const localAppData = process.env.LOCALAPPDATA || "";
+  const userProfile = process.env.USERPROFILE || "";
+  const programFiles = process.env["ProgramFiles"] || "C:\\Program Files";
+  const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+
+  const windowsPaths = [
+    `${programFiles}\\Git\\bin\\bash.exe`,
+    `${programFiles}\\Git\\usr\\bin\\bash.exe`,
+    `${programFilesX86}\\Git\\bin\\bash.exe`,
+    `${programFilesX86}\\Git\\usr\\bin\\bash.exe`,
+    `${localAppData}\\Programs\\Git\\bin\\bash.exe`,
+    `${localAppData}\\Programs\\Git\\usr\\bin\\bash.exe`,
+    `${userProfile}\\scoop\\apps\\git\\current\\bin\\bash.exe`,
+    "C:\\msys64\\usr\\bin\\bash.exe",
+    "C:\\tools\\msys64\\usr\\bin\\bash.exe",
+  ];
+
+  for (const p of windowsPaths) {
+    if (existsSync(p)) return p;
+  }
+
+  return null;
+}
+
+/**
  * Bash tool: Execute shell commands sandboxed to the project workspace directory.
+ * Fully OS-agnostic: executes with full POSIX Bash semantics across Windows, macOS, and Linux.
  */
 export const bashTool: Tool = {
   name: "bash",
   description:
-    "Execute a shell command sandboxed within the project workspace (e.g. 'bun test', 'npm run build', 'tsc', 'git status').",
+    "Execute a shell command sandboxed within the project workspace (e.g. 'bun test', 'npm run build', 'tsc', 'git status'). OS-agnostic: resolves POSIX Bash syntax across Windows, Linux, and macOS.",
   parameters: {
     type: "object",
     properties: {
@@ -198,50 +237,132 @@ export const bashTool: Tool = {
 
     const timeout = typeof args.timeoutMs === "number" && args.timeoutMs > 0 ? args.timeoutMs : 30000;
     const workspaceRoot = process.cwd();
+    const startTime = Date.now();
 
     try {
-      const isWindows = process.platform === "win32";
-      const shellCmd = isWindows
-        ? ["powershell.exe", "-NoProfile", "-Command", rawCommand]
-        : ["bash", "-c", rawCommand];
+      const bashExe = resolveBashExecutable();
 
-      const startTime = Date.now();
-      const proc = Bun.spawn(shellCmd, {
-        cwd: workspaceRoot,
-        env: { ...process.env },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      if (bashExe) {
+        // Execute via native POSIX Bash binary
+        const proc = Bun.spawn([bashExe, "-c", rawCommand], {
+          cwd: workspaceRoot,
+          env: { ...process.env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
-      let timedOut = false;
-      const timeoutId = setTimeout(() => {
-        timedOut = true;
-        try {
-          proc.kill();
-        } catch {
-          // Ignore
+        let timedOut = false;
+        const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
+          setTimeout(() => {
+            timedOut = true;
+            try {
+              proc.kill();
+              if (process.platform === "win32" && proc.pid) {
+                Bun.spawn(["taskkill", "/F", "/T", "/PID", String(proc.pid)], {
+                  stdout: "ignore",
+                  stderr: "ignore",
+                });
+              }
+            } catch {
+              // Ignore
+            }
+            resolve({ timedOut: true });
+          }, timeout);
+        });
+
+        const execPromise = Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]).then(([stdout, stderr, exitCode]) => ({
+          timedOut: false as const,
+          stdout,
+          stderr,
+          exitCode,
+        }));
+
+        const result = await Promise.race([execPromise, timeoutPromise]);
+        const durationMs = Date.now() - startTime;
+
+        if (result.timedOut) {
+          const execution: ToolExecutionDetails = {
+            command: rawCommand,
+            exitCode: null,
+            stdout: "",
+            stderr: `Command '${rawCommand}' timed out after ${timeout}ms.`,
+            durationMs,
+            timedOut: true,
+          };
+          return createToolResponse({
+            toolStatus: "success",
+            outcome: "timeout",
+            execution,
+            error: {
+              type: "command_execution_error",
+              message: `Command '${rawCommand}' timed out after ${timeout}ms.`,
+            },
+          });
         }
-      }, timeout);
 
-      const [stdoutText, stderrText] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-      ]);
+        const exitCode = result.exitCode;
+        const stdoutText = result.stdout.trimEnd();
+        const stderrText = result.stderr.trimEnd();
 
-      const exitCode = await proc.exited;
-      clearTimeout(timeoutId);
+        const execution: ToolExecutionDetails = {
+          command: rawCommand,
+          exitCode,
+          stdout: stdoutText,
+          stderr: stderrText,
+          durationMs,
+          timedOut: false,
+        };
+
+        if (exitCode !== 0) {
+          return createToolResponse({
+            toolStatus: "success",
+            outcome: "failure",
+            execution,
+            error: {
+              type: "command_execution_error",
+              message: `Command '${rawCommand}' exited with code ${exitCode}.`,
+            },
+          });
+        }
+
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "success",
+          execution,
+        });
+      }
+
+      // Fallback: Cross-platform POSIX engine via Bun Shell
+      const timeoutPromise = new Promise<{ timedOut: true }>((resolve) =>
+        setTimeout(() => resolve({ timedOut: true }), timeout)
+      );
+
+      const execPromise = $`${{ raw: rawCommand }}`
+        .cwd(workspaceRoot)
+        .env({ ...process.env })
+        .quiet()
+        .nothrow()
+        .then((res) => ({
+          timedOut: false as const,
+          res,
+        }));
+
+      const result = await Promise.race([execPromise, timeoutPromise]);
       const durationMs = Date.now() - startTime;
 
-      const execution: ToolExecutionDetails = {
-        command: rawCommand,
-        exitCode: timedOut ? null : exitCode,
-        stdout: stdoutText.trimEnd(),
-        stderr: stderrText.trimEnd(),
-        durationMs,
-        timedOut,
-      };
-
-      if (timedOut) {
+      if (result.timedOut) {
+        const execution: ToolExecutionDetails = {
+          command: rawCommand,
+          exitCode: null,
+          stdout: "",
+          stderr: `Command '${rawCommand}' timed out after ${timeout}ms.`,
+          durationMs,
+          timedOut: true,
+        };
         return createToolResponse({
           toolStatus: "success",
           outcome: "timeout",
@@ -253,14 +374,24 @@ export const bashTool: Tool = {
         });
       }
 
-      if (exitCode !== 0) {
+      const { res } = result;
+      const execution: ToolExecutionDetails = {
+        command: rawCommand,
+        exitCode: res.exitCode,
+        stdout: res.stdout.toString().trimEnd(),
+        stderr: res.stderr.toString().trimEnd(),
+        durationMs,
+        timedOut: false,
+      };
+
+      if (res.exitCode !== 0) {
         return createToolResponse({
           toolStatus: "success",
           outcome: "failure",
           execution,
           error: {
             type: "command_execution_error",
-            message: `Command '${rawCommand}' exited with code ${exitCode}.`,
+            message: `Command '${rawCommand}' exited with code ${res.exitCode}.`,
           },
         });
       }
@@ -271,6 +402,7 @@ export const bashTool: Tool = {
         execution,
       });
     } catch (err: any) {
+      const durationMs = Date.now() - startTime;
       return createToolResponse({
         toolStatus: "tool_error",
         outcome: "tool_error",

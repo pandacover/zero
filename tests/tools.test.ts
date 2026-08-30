@@ -137,6 +137,18 @@ describe("Coding Tools & Skills Suite", () => {
     expect(res.error?.type).toBe("command_execution_error");
   });
 
+  it("bashTool executes OS-agnostic POSIX syntax (command chaining, quoting, and pipes)", async () => {
+    const rawRes = await bashTool.execute({
+      command: "echo 'first line' && echo 'second line' | grep 'second'",
+    });
+    const res: ToolResponse = JSON.parse(rawRes);
+
+    expect(res.toolStatus).toBe("success");
+    expect(res.outcome).toBe("success");
+    expect(res.execution?.stdout).toContain("first line");
+    expect(res.execution?.stdout).toContain("second line");
+  });
+
   it("writeTool creates directories and writes content with structured response", async () => {
     const testFile = `${TEST_DIR}/nested/hello.txt`;
     const rawRes = await writeTool.execute({
