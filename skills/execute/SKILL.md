@@ -1,7 +1,7 @@
 ---
 name: execute
 type: process_skill
-description: The core orchestration workflow to follow for every user task or query.
+description: The core orchestration workflow to follow for every user task or query, including deterministic tool error recovery.
 when_to_use:
   - Triggered on every user prompt, coding request, or task.
   - Guiding end-to-end task execution from understanding to exploration, implementation, validation, debugging, and summary.
@@ -14,13 +14,17 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 
 ---
 
-## ⚡ Core Principle: Evaluating Consistent Tool Outputs
+## ⚡ Core Principles: Consistency & Mechanical Recovery
 
-- An isolated empty tool output can be ambiguous. Verify state through consistent tool invocations (e.g. broad `glob` search or root path checks).
-- **Consistency is key**: When tool outputs are **consistent across multiple calls**, that provides **strong evidence of the actual state** (e.g., clean empty workspace, zero remaining bug occurrences, or zero compilation errors).
-- **Decision Rule**:
-  1. **Proceed Naturally**: If the consistent state aligns with the user's objective (e.g. starting a new project in an empty folder, or verifying that all tests pass), proceed with the natural course of action.
-  2. **Ask the User**: If the consistent state conflicts with prerequisites (e.g. expected an existing repository to modify but the workspace is consistently empty), explain the observed state clearly and ask the user for guidance.
+1. **Consistent Output is Evidence of State**:
+   - An isolated output may be ambiguous. When tool outputs are **consistent across multiple calls** (e.g. `glob` from root confirms empty workspace, or tests pass across multiple runs), that provides strong evidence of actual state.
+   - **Decision Rule**:
+     - *Proceed Naturally*: If the consistent state aligns with the user's objective (e.g. scaffolding a new project in an empty folder, or verifying all tests pass), proceed with the natural course of action.
+     - *Ask the User*: If the consistent state conflicts with prerequisites (e.g. expected an existing codebase to modify but directory is empty), explain the findings and ask the user.
+2. **Mechanical Tool Recovery**:
+   - When an `edit` fails (`outcome: "mismatch"`): **Immediately `read` the target file region before retrying.** Never blindly re-attempt `edit`.
+   - When a `read` fails with `not_found`: Use `glob` to find the correct file path.
+   - When a `bash` command fails: Read the failing lines or `package.json` before retrying.
 
 ---
 
@@ -31,11 +35,11 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
         ↓
 [2. Explore Codebase]  ──(use "codebase_discovery", "glob", "grep", "read")
         ↓
-[3. Implement]         ──(use domain skills: "react", "vite", "typescript", "edit", "write")
+[3. Implement]         ──(use domain conventions: "react", "vite", "typescript", "edit", "write")
         ↓
 [4. Validate Work]     ──(use "validation_of_work", "bash")
         ↓
-   Errors found? ──YES──→ [5. Debug] ──(use "debugging": reproduce first! -> fix)
+   Errors found? ──YES──→ [5. Debug] ──(use "debugging": reproduce first! -> fix -> mechanical recovery)
         │                       │
         NO                      └─→ (Back to Step 4: Validate Work)
         ↓
@@ -55,8 +59,9 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 - Read relevant lines with `read` to build a mental map of existing patterns before making changes.
 
 ### Step 3: Implement the Task
-- Consult appropriate domain skills (`react`, `vite`, `typescript`) using `skill_discovery`.
+- Consult appropriate domain conventions (`react`, `vite`, `typescript`) using `skill_discovery`.
 - Apply minimal, surgical modifications using `edit`, or create clean new files with `write`.
+- **Mechanical Recovery**: If `edit` fails, invoke `read` on the target lines before retrying.
 
 ### Step 4: Validate the Work (`validation_of_work`)
 - Read `skills/validation_of_work/SKILL.md` via `skill_discovery({ skillName: "validation_of_work" })`.

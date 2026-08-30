@@ -1,66 +1,71 @@
 ---
 name: vite
 type: domain_skill
-description: Domain skill for Vite build tool configuration, plugins, development server, path aliases, environment variables, and production bundling.
+description: Domain conventions, decision rules, and configuration patterns for Vite bundling, plugins, and development workflows.
 when_to_use:
-  - Configuring or modifying 'vite.config.ts' or 'vite.config.js'.
-  - Setting up Vite plugins (e.g. '@vitejs/plugin-react', tailwind, svgr).
-  - Configuring path aliases (e.g. '@/*' pointing to 'src/*').
-  - Debugging bundling, dev server proxy, or static asset issues.
+  - Configuring or modifying 'vite.config.ts' (plugins, aliases, dev server, build outputs).
+  - Setting up module resolution, path aliases, environment variables, or asset handling.
+  - Resolving bundling issues, asset import errors, or dev server proxy configurations.
 how_to_access: Read via skill_discovery({ skillName: "vite" }). Do NOT invoke as a tool.
 ---
 
-# Vite Domain Skill
+# Vite Domain Skill: Conventions & Decision Rules
 
-> **Note**: This is a domain knowledge guideline. Do not invoke `vite` as a tool call. Use tools like `read`, `write`, `edit`, and `bash`.
-
----
-
-## Standard `vite.config.ts` Setup:
-
-```typescript
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import { resolve } from 'path';
-
-// https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      '@': resolve(__dirname, 'src'),
-    },
-  },
-  server: {
-    port: 3000,
-    open: false,
-  },
-  build: {
-    outDir: 'dist',
-    sourcemap: true,
-    target: 'esnext',
-  },
-});
-```
+This skill provides conventions and decision rules for configuring Vite build pipelines, module resolution, and asset workflows.
 
 ---
 
-## Key Vite Conventions:
+## 1. Module Resolution & Path Aliases Conventions
 
-1. **Path Aliases**:
-   - When adding an alias in `vite.config.ts` (`@` -> `src`), also add the matching `paths` mapping in `tsconfig.json`:
-     ```json
-     {
-       "compilerOptions": {
-         "baseUrl": ".",
-         "paths": {
-           "@/*": ["src/*"]
-         }
-       }
-     }
-     ```
-2. **Environment Variables**:
-   - Access client-side env vars using `import.meta.env.VITE_*`.
-   - Variables without `VITE_` prefix are intentionally excluded from client bundles for security.
-3. **HTML Entry**:
-   - Vite uses `index.html` at the project root (not in `public/`) as the entry point, which imports `<script type="module" src="/src/main.tsx"></script>`.
+- **Synchronized Configuration Rule**:
+  - Whenever you define a path alias in `vite.config.ts` (`resolve.alias`), you **must** synchronize the corresponding paths in `tsconfig.json` so that both the bundler and TypeScript type checker resolve imports identically:
+    - **In `vite.config.ts`**:
+      ```typescript
+      resolve: {
+        alias: {
+          '@': resolve(__dirname, 'src'),
+        },
+      }
+      ```
+    - **In `tsconfig.json`**:
+      ```json
+      "compilerOptions": {
+        "baseUrl": ".",
+        "paths": {
+          "@/*": ["src/*"]
+        }
+      }
+      ```
+
+---
+
+## 2. Environment Variables & Security Rules
+
+- **Client Exposure Rule**:
+  - Only environment variables prefixed with `VITE_` (e.g. `VITE_API_URL`) are embedded into the client-side JavaScript bundle via `import.meta.env.VITE_*`.
+  - **Security Rule**: Never prefix private API keys, database secrets, or sensitive tokens with `VITE_`. Those must remain on backend servers.
+- **Type Declaration Convention**:
+  - Add custom environment variable definitions to `src/vite-env.d.ts` for type safety:
+    ```typescript
+    /// <reference types="vite/client" />
+    interface ImportMetaEnv {
+      readonly VITE_API_URL: string;
+    }
+    ```
+
+---
+
+## 3. Asset Handling Decision Rules
+
+| Asset Category | Where to Store | How to Reference | Bundler Behavior |
+| :--- | :--- | :--- | :--- |
+| **Static / Untouched** | `public/` directory (e.g. `favicon.ico`, `robots.txt`) | Root absolute path: `/favicon.ico` | Copied verbatim to `dist/` root without content hashing. |
+| **Processed / Component Assets** | `src/assets/` (e.g. icons, logos, illustrations) | ESM import: `import logo from '@/assets/logo.svg'` | Inlined as Base64 (if small) or emitted with content hash for long-term caching. |
+| **CSS / PostCSS Assets** | `src/styles/` | ESM import in entry: `import './styles/index.css'` | Processed through PostCSS/Tailwind pipeline and minified. |
+
+---
+
+## 4. Plugin & Build Optimization Rules
+
+- **Plugin Ordering**: Framework plugins (like `@vitejs/plugin-react`) should generally precede transform and utility plugins.
+- **Build Target**: Default to `"target": "esnext"` for modern evergreen browsers unless legacy browser polyfills are explicitly required.

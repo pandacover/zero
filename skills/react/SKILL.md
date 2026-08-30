@@ -1,59 +1,67 @@
 ---
 name: react
 type: domain_skill
-description: Domain skill for React component architecture, hooks best practices, JSX syntax, state management, and modern UI patterns.
+description: Domain conventions, decision rules, and architecture patterns for React and TypeScript applications.
 when_to_use:
-  - Building, modifying, or refactoring React components (.tsx, .jsx).
-  - Designing custom React hooks, component hierarchies, or context providers.
-  - Resolving React re-rendering issues, stale closures, or state bugs.
-  - Integrating UI component libraries (Tailwind, Lucide icons, Framer Motion, Radix UI).
+  - Designing or refactoring React components, hooks, and component hierarchies.
+  - Making architectural decisions around state management, effects, and composition.
+  - Resolving re-rendering issues, stale closures, or event handling patterns.
 how_to_access: Read via skill_discovery({ skillName: "react" }). Do NOT invoke as a tool.
 ---
 
-# React Domain Skill
+# React Domain Skill: Conventions & Decision Rules
 
-> **Note**: This is a domain knowledge guideline. Do not invoke `react` as a tool call. Use tools like `read`, `write`, `edit`, and `bash`.
+This skill provides architectural conventions and decision frameworks for writing idiomatic, robust React applications. Use these guidelines to make informed engineering choices.
 
 ---
 
-## Core Guidelines & Best Practices:
+## 1. State Architecture Decision Rules
 
-### 1. Functional Components & Typing
-- Always write functional components with TypeScript:
+| State Type | When to Use | How to Implement |
+| :--- | :--- | :--- |
+| **Local UI State** | State isolated to a single component (e.g. open dropdown, active tab, form inputs). | `useState` or `useReducer` for complex transitions. |
+| **Derived State** | Values that can be computed from existing props or state. | **Do NOT put in state.** Compute inline during render, or wrap with `useMemo` only if computation is measurably expensive. |
+| **Lifted State** | State needed by two or more sibling components. | Lift state up to their closest common ancestor and pass via props. |
+| **Global / Shared State** | App-wide cross-cutting state (auth user, theme, global notifications). | React Context for low-frequency updates; external stores (Zustand, Redux) for high-frequency updates. |
+| **Server Cache State** | Data fetched from backend APIs. | React Query / SWR / cache layer instead of manual `useEffect` + `useState` fetching. |
+
+> **Golden Rule**: Never duplicate or sync state that can be derived synchronously during render.
+
+---
+
+## 2. Effects vs. Event Handlers Decision Rules
+
+- **User Actions $\rightarrow$ Event Handlers**:
+  - Network requests, form submissions, navigation, or state updates triggered by user clicks or keypresses **belong in event handlers** (e.g. `handleSubmit`, `onClick`).
+  - *Anti-pattern*: Setting a state flag in an event handler just to trigger a `useEffect`.
+- **External System Sync $\rightarrow$ `useEffect`**:
+  - Use `useEffect` **only** to synchronize the component with external systems (e.g. DOM event listeners, WebSockets, third-party non-React widgets, timers).
+  - Always return a cleanup function to prevent memory leaks and dangling subscriptions.
+
+---
+
+## 3. Component Decomposition & Composition Conventions
+
+1. **Composition over Deep Prop Drilling**:
+   - Prefer passing components as `children` or render props rather than passing data down 4+ levels.
+2. **Container / Presentational Boundaries**:
+   - Keep presentational components pure (props in, JSX out) and decoupled from data fetching.
+   - Colocate stateful controller/container logic in custom hooks (`use[FeatureName]`).
+3. **List Keys Convention**:
+   - Always use unique, stable entity IDs for `key` props (e.g. `<Item key={item.id} />`).
+   - Never use array indices as keys if items can be reordered, inserted, or filtered.
+
+---
+
+## 4. TypeScript & React Typing Conventions
+
+- **Props Interface**: Define explicit interface named `[ComponentName]Props`:
   ```tsx
-  interface ButtonProps {
-    label: string;
-    variant?: "primary" | "secondary";
-    onClick?: () => void;
-    disabled?: boolean;
+  interface UserCardProps {
+    user: User;
+    onSelect?: (userId: string) => void;
+    className?: string;
   }
-
-  export const Button: React.FC<ButtonProps> = ({ label, variant = "primary", onClick, disabled }) => {
-    return (
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onClick}
-        className={`btn btn-${variant}`}
-      >
-        {label}
-      </button>
-    );
-  };
   ```
-
-### 2. Modern Hooks Rules
-- **`useState`**: For local UI state. Keep state minimal and derive values whenever possible rather than duplicating state.
-- **`useEffect`**: Use primarily for external synchronization (subscriptions, timers, DOM APIs). Avoid using effects for state synchronization.
-- **`useMemo` & `useCallback`**: Use to memoize expensive computations or stable callback references passed to memoized children.
-- **`useRef`**: For DOM references or mutable values that do not trigger re-renders.
-
-### 3. JSX & HTML Hygiene
-- Always close JSX self-closing tags explicitly (e.g. `<img />`, `<input />`, `<App />`).
-- Ensure all elements in an array have unique and stable `key` props (never use random numbers or array indices if items can reorder).
-- In TypeScript files with JSX, use `.tsx` extension and verify `tsconfig.json` has `"jsx": "react-jsx"`.
-
-### 4. Component Structure & Separation of Concerns
-- Keep components small and focused on a single responsibility.
-- Separate presentational components from data-fetching/container logic.
-- Place reusable components under `src/components/`, hooks in `src/hooks/`, and types in `src/types/`.
+- **Event Handler Types**: Use standard React synthetic event types (`React.MouseEvent<HTMLButtonElement>`, `React.ChangeEvent<HTMLInputElement>`).
+- **Refs**: Explicitly type DOM refs (`useRef<HTMLInputElement | null>(null)`).

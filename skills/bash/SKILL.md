@@ -23,14 +23,22 @@ parameters:
 
 Use the `bash` tool to execute terminal commands sandboxed to the project's root directory.
 
-## Sandboxing & Safety Rules:
-- Commands always execute with the project's workspace directory as `cwd`.
-- Do not run interactive commands that wait indefinitely for user stdin without flags.
-- Avoid commands that modify files outside the workspace.
-- Long-running processes are automatically terminated when `timeoutMs` expires.
+---
 
-## Common Command Patterns:
-- **Typecheck**: `bash({ command: "bunx tsc --noEmit" })` or `bash({ command: "npx tsc --noEmit" })`
-- **Run Tests**: `bash({ command: "bun test" })` or `bash({ command: "npm test" })`
-- **Build Project**: `bash({ command: "npm run build" })`
-- **Git Status**: `bash({ command: "git status" })`
+## 🛠️ Mechanical Recovery Protocol (MANDATORY on Command Failure)
+
+If a `bash` command fails (`outcome: "failure"` or non-zero exit code):
+
+1. **Compilation / Type Error (`tsc`)**:
+   - Inspect the exact file path and line number reported in `stdout`/`stderr`.
+   - Call `read` on that specific file and line range to view the error context before applying fixes.
+2. **Test Failure (`bun test`, `npm test`)**:
+   - Do not re-run tests in a loop without editing code.
+   - Read the failing test assertion and stack trace. Locate the failing code with `read`, apply the surgical fix with `edit`, then re-run the test.
+3. **Missing Command or Script Error**:
+   - If an `npm run <script>` fails with script missing, call `read({ path: "package.json" })` to check the actual available `scripts` and `dependencies`.
+4. **Timeout (`outcome: "timeout"`)**:
+   - If a test suite or build takes longer than 30s, specify an increased `timeoutMs` parameter:
+     ```json
+     bash({ "command": "bun test", "timeoutMs": 60000 })
+     ```

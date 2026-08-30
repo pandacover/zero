@@ -1,11 +1,11 @@
 ---
 name: debugging
 type: process_skill
-description: Systematic process for reproducing, isolating, and fixing bugs. Every bug is hiding in plain sight; if you cannot reproduce it, you have not fixed it.
+description: Systematic process for reproducing, isolating, and fixing bugs, with deterministic mechanical recovery for tool failures.
 when_to_use:
   - Investigating test failures, build errors, type errors, or runtime exceptions.
+  - Recovering deterministically when an 'edit', 'read', or 'bash' tool call fails.
   - Resolving unexpected behavior, state inconsistencies, or styling regressions.
-  - Diagnosing broken features or misbehaving API integrations.
 how_to_access: Read via skill_discovery({ skillName: "debugging" }). Do NOT invoke as a tool.
 tools_used:
   - bash
@@ -14,18 +14,24 @@ tools_used:
   - edit
 ---
 
-# Debugging Skill
+# Debugging Skill: Protocol & Mechanical Recovery
 
 > *"Every bug is hiding in plain sight, and if you cannot reproduce it you have not fixed it."*
-> **Note**: This is a process guideline. Do not call `debugging` as a tool call. Use tools like `bash`, `read`, `grep`, and `edit`.
 
 ---
 
-## ⚡ Core Principle: Consistent Empty Output in Bug Verification
+## 🛠️ Mechanical Tool Recovery Matrix (MANDATORY on Tool Failures)
 
-- A single empty search result could be caused by an incorrect search term or path.
-- **Consistency is key**: When multiple targeted tool calls (e.g. running the test suite via `bash`, checking type errors, and running `grep` for the offending symbol) **consistently return 0 errors and 0 occurrences**, that is **strong evidence of success**, confirming the bug is eradicated.
-- If repeated checks yield unexpected or ambiguous results that contradict the expected behavior, directly communicate the observed findings to the user and ask for clarification, or continue with the natural course of action.
+When any tool execution fails, follow this deterministic recovery protocol before retrying:
+
+| Failed Tool Call | Failure Reason | Deterministic Mechanical Recovery Action |
+| :--- | :--- | :--- |
+| **`edit`** | `outcome: "mismatch"` (`oldString not found` or `matched N occurrences`) | **DO NOT GUESS OR RETRY BLINDLY.** Immediately call `read({ path, startLine, endLine })` on the target region to inspect current lines and whitespace. Copy the exact code into `oldString` (expanding lines if ambiguous) and retry. |
+| **`read`** | `outcome: "not_found"` | Run `glob({ pattern: "**/*<name>*" })` to discover the correct file location before re-invoking `read`. |
+| **`read`** | `outcome: "invalid_target"` (directory) | Run `glob({ path: targetDir, pattern: "*" })` to view directory contents. |
+| **`bash`** | `exitCode != 0` (Type / Compile error) | Read the exact file and line number cited in compiler error output using `read` before attempting an edit. |
+| **`bash`** | `exitCode != 0` (Missing script/binary) | Call `read({ path: "package.json" })` to inspect defined `scripts` and installed `dependencies`. |
+| **`write`** | `outcome: "invalid_target"` (directory conflict) | Run `glob` to verify directory structure and specify the exact target filename. |
 
 ---
 
@@ -49,6 +55,7 @@ tools_used:
 
 ### Stage 3: Apply Surgical Fix
 - Make the minimal necessary change to resolve the root cause using `edit`.
+- If `edit` fails, apply the **Mechanical Tool Recovery** rule above (`read` file $\rightarrow$ copy exact snippet $\rightarrow$ re-edit).
 - Do not introduce unrelated refactorings while debugging.
 - Preserve existing logic, types, and comments.
 

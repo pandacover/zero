@@ -23,12 +23,19 @@ parameters:
 
 # Edit Skill
 
-Use this skill/tool to make surgical, targeted modifications to an existing file without rewriting the entire file.
+Use this tool to make surgical, targeted modifications to an existing file without rewriting the entire file.
 
-## When to use:
-- Refactoring or updating a specific function, class, or variable.
-- Adding a single import statement or updating a configuration line.
-- Fixing a specific bug or syntax error.
+---
 
-## Example usage:
-- `edit({ path: "src/config.ts", oldString: "const port = 3000;", newString: "const port = 8080;" })`
+## 🛠️ Mechanical Recovery Protocol (MANDATORY on Edit Failure)
+
+If an `edit` call fails with `outcome: "mismatch"` (either `oldString was not found` or `matched multiple occurrences`):
+
+1. **DO NOT RETRY BLINDLY**: Never guess whitespace, indentation, or lines, and never retry the exact same `edit` without inspecting the file.
+2. **IMMEDIATE RECOVERY ACTION**: Call `read` on the target file around the lines you intend to edit:
+   ```json
+   read({ "path": "path/to/file.ts", "startLine": 20, "endLine": 45 })
+   ```
+3. **OBSERVE EXACT CONTENT**: Copy the exact characters, indentation spaces/tabs, and line endings as shown in the `read` output into your new `oldString`.
+4. **RESOLVE AMBIGUITY**: If the failure was due to multiple occurrences (`occurrences > 1`), expand the `oldString` to include 1–2 surrounding unique lines of context above and below the change.
+5. **EXECUTE RECOVERED EDIT**: Perform the updated `edit` with the confirmed exact substring.

@@ -23,13 +23,26 @@ parameters:
 
 # Read Skill
 
-Use this skill/tool to examine the contents of a specific file in the repository.
+Use this tool to examine the contents of a specific file in the repository.
 
-## When to use:
-- Inspecting source code, configuration files, or logs.
-- Reading specific line ranges (e.g. lines 10 to 50) of large files to save context.
-- Verifying code structure before making edits.
+---
 
-## Example usage:
-- `read({ path: "src/index.ts" })`
-- `read({ path: "src/agent.ts", startLine: 1, endLine: 50 })`
+## 🛠️ Mechanical Recovery Protocol (MANDATORY on Read Failure)
+
+- **If `outcome: "not_found"` (File does not exist)**:
+  1. Do not repeat the same invalid path.
+  2. Run `glob` with a wildcard pattern to find where the file actually lives:
+     ```json
+     glob({ "pattern": "**/*[filename]*" })
+     ```
+  3. Re-invoke `read` using the discovered valid path.
+
+- **If `outcome: "invalid_target"` (Target is a directory, not a file)**:
+  1. The path points to a directory. Use `glob` to list files inside that directory:
+     ```json
+     glob({ "path": "path/to/dir", "pattern": "*" })
+     ```
+
+- **If `outcome: "mismatch"` (startLine exceeds total lines)**:
+  1. The file has fewer lines than requested (check `totalLines` in `data`).
+  2. Call `read` without line bounds or with `startLine: 1` to inspect the full file.

@@ -1,59 +1,60 @@
 ---
 name: typescript
 type: domain_skill
-description: Domain skill for TypeScript strict typing, tsconfig.json configuration, TSX syntax, interfaces, generics, and compiler safety.
+description: Domain conventions, type system decision rules, strictness guidelines, and compilation safety patterns for TypeScript.
 when_to_use:
-  - Designing types, interfaces, enums, unions, or generic utility functions.
+  - Designing types, interfaces, discriminated unions, or generic utilities.
+  - Making decisions between 'type' vs 'interface', generics vs concrete types.
+  - Resolving complex compiler errors, type widening, or strict null check issues.
   - Setting up or tuning 'tsconfig.json' compiler options.
-  - Resolving TypeScript compilation errors, type mismatches, or missing definitions.
-  - Enforcing strict null checks and eliminating unsafe 'any' assertions.
 how_to_access: Read via skill_discovery({ skillName: "typescript" }). Do NOT invoke as a tool.
 ---
 
-# TypeScript Domain Skill
+# TypeScript Domain Skill: Conventions & Decision Rules
 
-> **Note**: This is a domain knowledge guideline. Do not invoke `typescript` as a tool call. Use tools like `read`, `write`, `edit`, and `bash`.
-
----
-
-## Recommended `tsconfig.json` Configuration:
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["DOM", "DOM.Iterable", "ESNext"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "strict": true,
-    "noImplicitAny": true,
-    "strictNullChecks": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true
-  },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist"]
-}
-```
+This skill provides conventions, type system decision frameworks, and idiomatic patterns for writing maintainable, type-safe TypeScript code.
 
 ---
 
-## Core TypeScript Rules:
+## 1. `interface` vs. `type` Decision Framework
 
-1. **Avoid `any`**:
-   - Use `unknown` for values with unknown shape at compile-time and narrow with type guards.
-   - Use proper generic type parameters `<T>` for reusable abstractions.
-2. **Explicit Interfaces for Public Contracts**:
-   - Use `interface` or `type` for all function arguments, props, and API response structures.
-3. **Strict Null & Undefined Checks**:
-   - Explicitly handle nullable values using optional chaining (`obj?.prop`) and nullish coalescing (`value ?? defaultValue`).
-4. **Validation Command**:
-   - Always run `bash({ command: "bunx tsc --noEmit" })` to verify complete type safety.
+| Criterion | Use `interface` | Use `type` |
+| :--- | :--- | :--- |
+| **Primary Purpose** | Defining object models, component props, and extensible public API shapes. | Defining unions, intersections, primitives, tuples, function signatures, and utility mapped types. |
+| **Extensibility** | Supports declaration merging and `extends` syntax. | Static and cannot be reopened. |
+| **Examples** | `interface UserConfig { ... }`<br>`interface ButtonProps { ... }` | `type Status = "idle" \| "active" \| "error";`<br>`type Nullable<T> = T \| null;` |
+
+> **Decision Rule**: Default to `interface` for object structures and component props; use `type` for unions, primitives, and complex type transformations.
+
+---
+
+## 2. Type Narrowing & Discrimination Rules
+
+- **Prefer Discriminated Unions over Loose Optional Fields**:
+  - When a data structure has mutually exclusive states, use a discriminant literal property (e.g. `type` or `status`):
+    ```typescript
+    type AsyncResult<T> =
+      | { status: "success"; data: T }
+      | { status: "error"; error: Error };
+    ```
+- **Avoid `any` — Use `unknown` with Narrowing**:
+  - `any` disables all compiler safety checks and propagates unsoundness.
+  - Use `unknown` for data from external APIs, JSON parsing, or user input, and narrow with type guards (`typeof`, `instanceof`, or custom `is` predicates) before accessing properties.
+
+---
+
+## 3. Strictness & Null Safety Conventions
+
+1. **Nullish Coalescing (`??`) vs Logical OR (`||`)**:
+   - Always use `??` when providing fallback defaults for nullable values (`value ?? defaultValue`) to preserve valid falsy values (`0`, `""`, `false`).
+2. **Optional Chaining (`?.`)**:
+   - Use optional chaining for nested properties that might be null or undefined.
+3. **Non-Null Assertions (`!`)**:
+   - Avoid `!` assertions unless immediately preceded by a runtime assertion or guard.
+
+---
+
+## 4. Compiler Safety & Verification
+
+- Always verify changes with `bash({ command: "bunx tsc --noEmit" })`.
+- Ensure `tsconfig.json` maintains `"strict": true`, `"noImplicitAny": true`, and `"strictNullChecks": true`.

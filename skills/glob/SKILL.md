@@ -19,13 +19,15 @@ parameters:
 
 # Glob Skill
 
-Use this skill/tool when you need to discover files or directory structures matching specific glob patterns across the project.
+Use this tool when you need to discover files or directory structures matching specific glob patterns across the project.
 
-## When to use:
-- Finding where files of a certain type are located (e.g., `**/*.test.ts`, `**/*.json`).
-- Checking if specific config or source files exist in the project.
-- Exploring project layout and subdirectories.
+---
 
-## Example usage:
-- `glob({ pattern: "**/*.ts" })`
-- `glob({ pattern: "*.json", path: "src" })`
+## 🛠️ Mechanical Recovery Protocol (on Unexpected Output or Errors)
+
+- **If `outcome: "invalid_target"` (Target is a file, not a directory)**:
+  - You passed a file path to `path`. If you meant to read the file, call `read({ path })`. If you meant to search the file's parent folder, pass `dirname(path)` to `path`.
+- **If `outcome: "not_found"` (Base directory does not exist)**:
+  - Check `glob({ pattern: "*" })` from the root `.` to verify valid top-level directories.
+- **If 0 matches returned (`count: 0`) when searching for a known file**:
+  - Broaden the pattern (e.g. from `src/*.ts` to `**/*.ts` or `**/*<keyword>*`) to catch nested subfolders.

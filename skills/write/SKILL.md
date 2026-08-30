@@ -3,9 +3,9 @@ name: write
 type: tool
 description: Create or completely overwrite a file with specified content. Creates directories automatically.
 when_to_use:
-  - Creating brand new source code files, tests, scripts, or documentation.
-  - Completely rewriting or replacing the entire content of an existing file.
-  - Setting up new configuration files or artifacts from scratch.
+  - Creating new source files, test files, configuration files, or documentation.
+  - Fully replacing an entire file when wholesale rewriting is cleaner than multiple granular edits.
+  - Bootstrapping initial project structure or boilerplate.
 parameters:
   path:
     type: string
@@ -19,12 +19,13 @@ parameters:
 
 # Write Skill
 
-Use this skill/tool to create new files or completely overwrite existing files.
+Use this tool to create new files or completely overwrite existing files.
 
-## When to use:
-- Creating new source code files, tests, scripts, or documentation.
-- Writing complete replacement implementations.
-- Setting up configuration files or artifacts.
+---
 
-## Example usage:
-- `write({ path: "src/utils.ts", content: "export const add = (a: number, b: number) => a + b;\n" })`
+## 🛠️ Mechanical Recovery Protocol (on Write Errors)
+
+- **If `outcome: "invalid_target"` (Target is an existing directory)**:
+  - The path provided matches an existing directory. Check the desired filename (e.g. `src/components/Button/index.tsx` instead of `src/components/Button`).
+- **If write fails due to permissions or lock**:
+  - Verify that the path is within the workspace root and that no background process has locked the file.
