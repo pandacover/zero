@@ -566,7 +566,6 @@ export async function runCLI(): Promise<void> {
               callId: event.callId,
               result: event.result,
               durationMs: event.durationMs,
-              status: isSuccess ? "success" : "error",
               toolStatus: parsed?.toolStatus,
               outcome: parsed?.outcome,
             });

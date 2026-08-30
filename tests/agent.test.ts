@@ -353,7 +353,8 @@ describe("Global Default Provider & Model across Sessions", () => {
       callId: "call_glob_1",
       result: "src/index.ts, src/agent.ts",
       durationMs: 120,
-      status: "success",
+      toolStatus: "success",
+      outcome: "success",
     });
 
     // 4. Record response step

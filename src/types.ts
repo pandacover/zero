@@ -148,7 +148,6 @@ export type TurnStep =
       callId: string;
       result: string;
       durationMs: number;
-      status: "success" | "error";
       toolStatus?: ToolStatus;
       outcome?: OperationOutcome;
     }
