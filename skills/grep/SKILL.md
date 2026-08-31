@@ -27,7 +27,7 @@ parameters:
 
 # Grep Skill
 
-Use this tool to search for text or regex patterns across files with line numbers and snippets.
+Use the `grep` tool to search for text or regex patterns across files with line numbers and snippets.
 
 ---
 
@@ -38,4 +38,4 @@ Use this tool to search for text or regex patterns across files with line number
   2. Simplify the regex pattern (avoid over-constraining with exact whitespace if formatting might vary across files).
   3. If searching a subfolder, broaden `path` to `"."`.
 - **If too many matches returned**:
-  1. Use `include` parameter (e.g. `include: "*.tsx"` or `include: "src/**/*"`) to filter by relevant file types.
+  1. Use the `include` parameter (e.g. `include: "*.tsx"` or `include: "src/**/*"`) to filter by relevant file types.

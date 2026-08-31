@@ -23,19 +23,19 @@ parameters:
 
 # Edit Skill
 
-Use this tool to make surgical, targeted modifications to an existing file without rewriting the entire file.
+Use the `edit` tool to make surgical, targeted modifications to an existing file without rewriting the entire file.
 
 ---
 
 ## 🛠️ Mechanical Recovery Protocol (MANDATORY on Edit Failure)
 
-If an `edit` call fails with `outcome: "mismatch"` (either `oldString was not found` or `matched multiple occurrences`):
+If an `edit` tool call fails with `outcome: "mismatch"` (either `oldString was not found` or `matched multiple occurrences`):
 
 1. **DO NOT RETRY BLINDLY**: Never guess whitespace, indentation, or lines, and never retry the exact same `edit` without inspecting the file.
-2. **IMMEDIATE RECOVERY ACTION**: Call `read` on the target file around the lines you intend to edit:
+2. **IMMEDIATE RECOVERY ACTION**: Call the `read` tool on the target file around the lines you intend to edit:
    ```json
    read({ "path": "path/to/file.ts", "startLine": 20, "endLine": 45 })
    ```
-3. **OBSERVE EXACT CONTENT**: Copy the exact characters, indentation spaces/tabs, and line endings as shown in the `read` output into your new `oldString`.
+3. **OBSERVE EXACT CONTENT**: Copy the exact characters, indentation spaces/tabs, and line endings as shown in the `read` tool output into your new `oldString`.
 4. **RESOLVE AMBIGUITY**: If the failure was due to multiple occurrences (`occurrences > 1`), expand the `oldString` to include 1–2 surrounding unique lines of context above and below the change.
-5. **EXECUTE RECOVERED EDIT**: Perform the updated `edit` with the confirmed exact substring.
+5. **EXECUTE RECOVERED EDIT**: Call the `edit` tool with the confirmed exact substring.

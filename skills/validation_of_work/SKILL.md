@@ -9,7 +9,6 @@ when_to_use:
 how_to_access: Read via skill_discovery({ skillName: "validation_of_work" }). Do NOT invoke as a tool.
 tools_used:
   - bash
-  - git
 ---
 
 # Validation of Work Skill
@@ -29,34 +28,28 @@ Never mark a task complete without rigorous, multi-layer verification.
 ## Validation Checklist:
 
 ### 1. Static Type Checking
-- Run the TypeScript compiler with no emit to catch syntax and type errors:
-  ```bash
-  bash({ command: "bunx tsc --noEmit" })
-  # or
-  bash({ command: "npx tsc --noEmit" })
+- Run the TypeScript compiler with no emit via the `bash` tool to catch syntax and type errors:
+  ```json
+  bash({ "command": "bunx tsc --noEmit" })
   ```
 - **Rule**: Exit code 0 with 0 errors printed confirms total type safety.
 
 ### 2. Automated Test Execution
-- Run unit and integration tests:
-  ```bash
-  bash({ command: "bun test" })
-  # or
-  bash({ command: "npm test" })
+- Run unit and integration tests via the `bash` tool:
+  ```json
+  bash({ "command": "bun test" })
   ```
 - **Rule**: All tests must pass (100% pass rate, 0 failures). If a test fails, invoke the `debugging` skill to reproduce and fix it.
 
 ### 3. Build & Bundle Verification
-- Run production build scripts if configured in `package.json`:
-  ```bash
-  bash({ command: "npm run build" })
-  # or
-  bash({ command: "bun run build" })
+- Run production build scripts via the `bash` tool if configured in `package.json`:
+  ```json
+  bash({ "command": "npm run build" })
   ```
 - Verify the bundler finishes with exit code 0 and produces valid artifacts without bundle errors.
 
 ### 4. Git Diff & Change Sanity Check
-- Check modified files and verify no unintended edits, leftover temporary debug logs, or syntax mistakes remain:
-  ```bash
-  bash({ command: "git status" })
+- Check modified files via the `bash` tool and verify no unintended edits, leftover temporary debug logs, or syntax mistakes remain:
+  ```json
+  bash({ "command": "git status" })
   ```

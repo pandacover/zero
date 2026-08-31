@@ -23,7 +23,7 @@ parameters:
 
 # Read Skill
 
-Use this tool to examine the contents of a specific file in the repository.
+Use the `read` tool to examine the contents of a specific file in the repository.
 
 ---
 
@@ -31,18 +31,18 @@ Use this tool to examine the contents of a specific file in the repository.
 
 - **If `outcome: "not_found"` (File does not exist)**:
   1. Do not repeat the same invalid path.
-  2. Run `glob` with a wildcard pattern to find where the file actually lives:
+  2. Call the `glob` tool with a wildcard pattern to find where the file actually lives:
      ```json
      glob({ "pattern": "**/*[filename]*" })
      ```
-  3. Re-invoke `read` using the discovered valid path.
+  3. Re-invoke the `read` tool using the discovered valid path.
 
 - **If `outcome: "invalid_target"` (Target is a directory, not a file)**:
-  1. The path points to a directory. Use `glob` to list files inside that directory:
+  1. The path points to a directory. Call the `glob` tool to list files inside that directory:
      ```json
      glob({ "path": "path/to/dir", "pattern": "*" })
      ```
 
 - **If `outcome: "mismatch"` (startLine exceeds total lines)**:
   1. The file has fewer lines than requested (check `totalLines` in `data`).
-  2. Call `read` without line bounds or with `startLine: 1` to inspect the full file.
+  2. Call the `read` tool without line bounds or with `startLine: 1` to inspect the full file.

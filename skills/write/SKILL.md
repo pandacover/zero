@@ -19,13 +19,13 @@ parameters:
 
 # Write Skill
 
-Use this tool to create new files or completely overwrite existing files.
+Use the `write` tool to create new files or completely overwrite existing files.
 
 ---
 
 ## 🛠️ Mechanical Recovery Protocol (on Write Errors)
 
 - **If `outcome: "invalid_target"` (Target is an existing directory)**:
-  - The path provided matches an existing directory. Check the desired filename (e.g. `src/components/Button/index.tsx` instead of `src/components/Button`).
+  - The path provided matches an existing directory. Check the desired filename (e.g. call the `write` tool with `path: "src/components/Button/index.tsx"` instead of `"src/components/Button"`).
 - **If write fails due to permissions or lock**:
   - Verify that the path is within the workspace root and that no background process has locked the file.
