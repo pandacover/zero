@@ -322,7 +322,7 @@ describe("Coding Tools & Skills Suite", () => {
 
     expect(res.toolStatus).toBe("success");
     expect(res.outcome).toBe("success");
-    expect(res.data.message).toContain("Successfully updated");
+    expect(res.data.message).toContain("Successfully applied 1 edit");
     const updated = await Bun.file(testFile).text();
     expect(updated).toBe("const a = 1;\nconst b = 42;\nconst c = 3;");
   });
@@ -357,6 +357,84 @@ describe("Coding Tools & Skills Suite", () => {
     expect(dupRes.outcome).toBe("mismatch");
     expect(dupRes.data.occurrences).toBe(2);
     expect(dupRes.error?.message).toContain("matched 2 occurrences");
+  });
+
+  it("editTool applies multiple targeted replacements across different sections of a file", async () => {
+    const testFile = `${TEST_DIR}/multi_section.ts`;
+    const initialContent = [
+      "import { alpha } from './alpha';",
+      "import { beta } from './beta';",
+      "",
+      "function compute() {",
+      "  const x = 10;",
+      "  return x + 5;",
+      "}",
+      "",
+      "export const result = compute();",
+    ].join("\n");
+
+    await writeTool.execute({
+      path: testFile,
+      content: initialContent,
+    });
+
+    // Edit imports at the top AND compute function body at the bottom simultaneously
+    const rawRes = await editTool.execute({
+      path: testFile,
+      edits: [
+        {
+          oldString: "import { beta } from './beta';",
+          newString: "import { beta, gamma } from './beta';",
+        },
+        {
+          oldString: "  const x = 10;\n  return x + 5;",
+          newString: "  const x = 20;\n  return x + gamma();",
+        },
+      ],
+    });
+
+    const res: ToolResponse = JSON.parse(rawRes);
+    expect(res.toolStatus).toBe("success");
+    expect(res.outcome).toBe("success");
+    expect(res.data.editsApplied).toBe(2);
+
+    const updatedContent = await Bun.file(testFile).text();
+    expect(updatedContent).toContain("import { beta, gamma } from './beta';");
+    expect(updatedContent).toContain("  const x = 20;\n  return x + gamma();");
+    expect(updatedContent).toContain("import { alpha } from './alpha';");
+    expect(updatedContent).toContain("export const result = compute();");
+  });
+
+  it("editTool matches all edits against original file and rejects overlapping or nested edits", async () => {
+    const testFile = `${TEST_DIR}/overlap.ts`;
+    await writeTool.execute({
+      path: testFile,
+      content: "function test() {\n  const a = 1;\n  const b = 2;\n  return a + b;\n}",
+    });
+
+    // 1. Overlapping edits
+    const rawOverlap = await editTool.execute({
+      path: testFile,
+      edits: [
+        {
+          oldString: "  const a = 1;\n  const b = 2;",
+          newString: "  const a = 100;\n  const b = 2;",
+        },
+        {
+          oldString: "  const b = 2;\n  return a + b;",
+          newString: "  const b = 200;\n  return a + b;",
+        },
+      ],
+    });
+    const overlapRes: ToolResponse = JSON.parse(rawOverlap);
+    expect(overlapRes.toolStatus).toBe("success");
+    expect(overlapRes.outcome).toBe("mismatch");
+    expect(overlapRes.error?.message).toContain("overlap or are nested");
+    expect(overlapRes.error?.message).toContain("merged together");
+
+    // 2. Original file untouched after overlap mismatch
+    const unchanged = await Bun.file(testFile).text();
+    expect(unchanged).toContain("const a = 1;\n  const b = 2;");
   });
 
   it("globTool finds matching files with structured data payload, returning count 0 on empty without error", async () => {

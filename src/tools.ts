@@ -1027,11 +1027,13 @@ export const writeTool: Tool = {
 };
 
 /**
- * Edit tool: Perform targeted substring replacement in an existing file.
+ * Edit tool: Perform targeted substring replacements in an existing file.
+ * Supports single or multi-section editing within a single file.
  */
 export const editTool: Tool = {
   name: "edit",
-  description: "Replace an exact substring within an existing file with new content.",
+  description:
+    "Perform one or more targeted replacements within a single file. Supports multiple edits across different sections of the file at once. Each edit's oldString is matched against the original file independently (not incrementally). Do not include overlapping or nested edits; if two edits overlap, merge them together into one edit. Do not include large unchanged regions just to connect distant changes—use multiple separate edit blocks in 'edits' instead.",
   parameters: {
     type: "object",
     properties: {
@@ -1039,16 +1041,35 @@ export const editTool: Tool = {
         type: "string",
         description: "Path to the file to edit.",
       },
+      edits: {
+        type: "array",
+        description:
+          "List of one or more targeted replacements ({ oldString, newString }) to apply across different sections of the file.",
+        items: {
+          type: "object",
+          properties: {
+            oldString: {
+              type: "string",
+              description: "The exact substring to replace in the original file.",
+            },
+            newString: {
+              type: "string",
+              description: "The replacement content.",
+            },
+          },
+          required: ["oldString", "newString"],
+        },
+      },
       oldString: {
         type: "string",
-        description: "The exact substring to replace.",
+        description: "The exact substring to replace (shorthand for single edit).",
       },
       newString: {
         type: "string",
-        description: "The replacement content.",
+        description: "The replacement content (shorthand for single edit).",
       },
     },
-    required: ["path", "oldString", "newString"],
+    required: ["path"],
   },
   execute: async (args: Record<string, any>): Promise<string> => {
     const rawPath = String(args.path || "").trim();
@@ -1063,10 +1084,48 @@ export const editTool: Tool = {
       });
     }
 
+    // Normalize edits list from edits or oldString/newString
+    let editList: Array<{ oldString: string; newString: string }> = [];
+    if (Array.isArray(args.edits) && args.edits.length > 0) {
+      editList = args.edits.map((e: any) => ({
+        oldString: String(e.oldString ?? ""),
+        newString: String(e.newString ?? ""),
+      }));
+    } else if (typeof args.oldString === "string") {
+      editList = [
+        {
+          oldString: String(args.oldString ?? ""),
+          newString: String(args.newString ?? ""),
+        },
+      ];
+    }
+
+    if (editList.length === 0) {
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "validation_error",
+          message: "At least one edit ('edits' array or 'oldString'/'newString') must be provided for the edit tool.",
+        },
+      });
+    }
+
+    for (let i = 0; i < editList.length; i++) {
+      if (!editList[i]!.oldString) {
+        return createToolResponse({
+          toolStatus: "tool_error",
+          outcome: "tool_error",
+          error: {
+            type: "validation_error",
+            message: `Edit #${i + 1} 'oldString' cannot be empty.`,
+          },
+        });
+      }
+    }
+
     const filePath = resolve(rawPath);
     const relPath = relative(process.cwd(), filePath).replace(/\\/g, "/") || rawPath;
-    const oldString = String(args.oldString ?? "");
-    const newString = String(args.newString ?? "");
 
     if (!existsSync(filePath)) {
       return createToolResponse({
@@ -1100,40 +1159,97 @@ export const editTool: Tool = {
       }
 
       const content = await Bun.file(filePath).text();
+      const matchedEdits: Array<{
+        index: number;
+        oldString: string;
+        newString: string;
+        startIndex: number;
+        endIndex: number;
+      }> = [];
 
-      if (!content.includes(oldString)) {
-        return createToolResponse({
-          toolStatus: "success",
-          outcome: "mismatch",
-          data: {
-            path: relPath,
-            occurrences: 0,
-          },
-          error: {
-            type: "filesystem_error",
-            message: `The oldString was not found in '${relPath}'.`,
-          },
+      // Step 1: Match every edit against the original file content
+      for (let i = 0; i < editList.length; i++) {
+        const { oldString, newString } = editList[i]!;
+
+        if (!content.includes(oldString)) {
+          return createToolResponse({
+            toolStatus: "success",
+            outcome: "mismatch",
+            data: {
+              path: relPath,
+              editIndex: i,
+              failedOldString: oldString,
+              occurrences: 0,
+            },
+            error: {
+              type: "filesystem_error",
+              message: `Edit #${i + 1} oldString was not found in '${relPath}'.`,
+            },
+          });
+        }
+
+        const occurrences = content.split(oldString).length - 1;
+        if (occurrences > 1) {
+          return createToolResponse({
+            toolStatus: "success",
+            outcome: "mismatch",
+            data: {
+              path: relPath,
+              editIndex: i,
+              failedOldString: oldString,
+              occurrences,
+            },
+            error: {
+              type: "filesystem_error",
+              message: `Edit #${i + 1} oldString matched ${occurrences} occurrences in '${relPath}'. Provide more surrounding lines to make it unique.`,
+            },
+          });
+        }
+
+        const startIndex = content.indexOf(oldString);
+        matchedEdits.push({
+          index: i,
+          oldString,
+          newString,
+          startIndex,
+          endIndex: startIndex + oldString.length,
         });
       }
 
-      // Check occurrences
-      const occurrences = content.split(oldString).length - 1;
-      if (occurrences > 1) {
-        return createToolResponse({
-          toolStatus: "success",
-          outcome: "mismatch",
-          data: {
-            path: relPath,
-            occurrences,
-          },
-          error: {
-            type: "filesystem_error",
-            message: `The oldString matched ${occurrences} occurrences in '${relPath}'.`,
-          },
-        });
+      // Step 2: Check for overlapping or nested edits
+      const sortedEdits = [...matchedEdits].sort((a, b) => a.startIndex - b.startIndex);
+      for (let j = 1; j < sortedEdits.length; j++) {
+        const prev = sortedEdits[j - 1]!;
+        const curr = sortedEdits[j]!;
+        if (curr.startIndex < prev.endIndex) {
+          return createToolResponse({
+            toolStatus: "success",
+            outcome: "mismatch",
+            data: {
+              path: relPath,
+              overlappingEdits: [
+                { editIndex: prev.index, oldString: prev.oldString, range: [prev.startIndex, prev.endIndex] },
+                { editIndex: curr.index, oldString: curr.oldString, range: [curr.startIndex, curr.endIndex] },
+              ],
+            },
+            error: {
+              type: "validation_error",
+              message: `Edits #${prev.index + 1} and #${curr.index + 1} overlap or are nested in '${relPath}'. Overlapping edits must be merged together into a single edit block.`,
+            },
+          });
+        }
       }
 
-      const updatedContent = content.replace(oldString, newString);
+      // Step 3: Apply replacements simultaneously from the original content
+      let updatedContent = "";
+      let lastIndex = 0;
+      for (const edit of sortedEdits) {
+        updatedContent += content.slice(lastIndex, edit.startIndex);
+        updatedContent += edit.newString;
+        lastIndex = edit.endIndex;
+      }
+      updatedContent += content.slice(lastIndex);
+
       await Bun.write(filePath, updatedContent);
 
       return createToolResponse({
@@ -1141,7 +1257,8 @@ export const editTool: Tool = {
         outcome: "success",
         data: {
           path: relPath,
-          message: `Successfully updated '${relPath}'.`,
+          editsApplied: editList.length,
+          message: `Successfully applied ${editList.length} edit${editList.length > 1 ? "s" : ""} to '${relPath}'.`,
         },
       });
     } catch (err: any) {
