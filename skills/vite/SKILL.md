@@ -1,90 +1,53 @@
 ---
 name: vite
 type: domain_skill
-description: Domain conventions, decision rules, and configuration patterns for Vite bundling, plugins, scaffolding, and development workflows.
+description: Domain conventions, architectural principles, and decision rules for Vite build configuration, module resolution, and project workflows.
 when_to_use:
-  - Scaffolding a new Vite project using 'npx create vite'.
-  - Configuring or modifying 'vite.config.ts' (plugins, aliases, dev server, build outputs).
+  - Scaffolding or configuring a Vite project.
   - Setting up module resolution, path aliases, environment variables, or asset handling.
-  - Resolving bundling issues, asset import errors, or dev server proxy configurations.
+  - Resolving bundling issues, dev server setup, or build pipeline configurations.
 how_to_access: Read via skill_discovery({ skillName: "vite" }). Do NOT invoke as a tool.
 ---
 
 # Vite Domain Skill: Conventions & Decision Rules
 
-This skill provides conventions, scaffolding patterns, and decision rules for configuring Vite build pipelines, module resolution, and asset workflows.
+This skill provides generic, version-agnostic conventions and decision frameworks for configuring Vite build pipelines, module resolution, and asset workflows.
 
 ---
 
-## 1. Scaffolding a New Vite Project
-
-- When starting in an empty workspace, the agent can run `npx create vite` (or `bun create vite`) via the `bash` tool to quickly scaffold a modern project:
-  ```bash
-  # Scaffold in the current directory with React + TypeScript template
-  bash({ command: "npx create vite . --template react-ts" })
-  # or with bun
-  bash({ command: "bun create vite . --template react-ts" })
-  ```
-- **Common Scaffolding Templates**:
-  - `react-ts`: React with TypeScript (recommended for React apps)
-  - `react`: React with JavaScript
-  - `vue-ts`: Vue 3 with TypeScript
-  - `vanilla-ts`: Pure TypeScript without a framework
-- After scaffolding, install dependencies via `bash({ command: "bun install" })` or `bash({ command: "npm install" })`.
+## 1. Project Scaffolding
+- When initializing a new project in an empty workspace, use the scaffolding command (such as `npx create vite`) via the `bash` tool.
+- Select the appropriate template matching the project's target framework and language requirements.
+- After scaffolding, install the project dependencies and verify the workspace configuration before adding features.
 
 ---
 
-## 2. Module Resolution & Path Aliases Conventions
-
-- **Synchronized Configuration Rule**:
-  - Whenever you define a path alias in `vite.config.ts` (`resolve.alias`), you **must** synchronize the corresponding paths in `tsconfig.json` so that both the bundler and TypeScript type checker resolve imports identically:
-    - **In `vite.config.ts`**:
-      ```typescript
-      resolve: {
-        alias: {
-          '@': resolve(__dirname, 'src'),
-        },
-      }
-      ```
-    - **In `tsconfig.json`**:
-      ```json
-      "compilerOptions": {
-        "baseUrl": ".",
-        "paths": {
-          "@/*": ["src/*"]
-        }
-      }
-      ```
+## 2. Module Resolution & Path Aliases
+- **Synchronization Invariant**:
+  - Whenever path aliases are configured in the bundler configuration (`resolve.alias`), the identical mappings must be reflected in the TypeScript configuration (`tsconfig.json` paths).
+  - Both the bundler (runtime module resolution) and TypeScript (type checking) must resolve aliases to the same underlying directories.
+- Keep aliases clear and minimal to avoid circular dependency resolution issues.
 
 ---
 
-## 3. Environment Variables & Security Rules
-
-- **Client Exposure Rule**:
-  - Only environment variables prefixed with `VITE_` (e.g. `VITE_API_URL`) are embedded into the client-side JavaScript bundle via `import.meta.env.VITE_*`.
-  - **Security Rule**: Never prefix private API keys, database secrets, or sensitive tokens with `VITE_`. Those must remain on backend servers.
-- **Type Declaration Convention**:
-  - Add custom environment variable definitions to `src/vite-env.d.ts` for type safety:
-    ```typescript
-    /// <reference types="vite/client" />
-    interface ImportMetaEnv {
-      readonly VITE_API_URL: string;
-    }
-    ```
+## 3. Environment Variables & Security Boundary
+- **Client vs. Server Separation**:
+  - Only environment variables explicitly designated with the framework's client prefix are exposed to client-side code at build time.
+  - **Security Rule**: Sensitive secrets, database credentials, and private API keys must never use client-exposed prefixes, as all client variables are embedded into public JavaScript bundles.
+- Keep client environment variable declarations typed to ensure compile-time verification across the application.
 
 ---
 
-## 4. Asset Handling Decision Rules
-
-| Asset Category | Where to Store | How to Reference | Bundler Behavior |
-| :--- | :--- | :--- | :--- |
-| **Static / Untouched** | `public/` directory (e.g. `favicon.ico`, `robots.txt`) | Root absolute path: `/favicon.ico` | Copied verbatim to `dist/` root without content hashing. |
-| **Processed / Component Assets** | `src/assets/` (e.g. icons, logos, illustrations) | ESM import: `import logo from '@/assets/logo.svg'` | Inlined as Base64 (if small) or emitted with content hash for long-term caching. |
-| **CSS / PostCSS Assets** | `src/styles/` | ESM import in entry: `import './styles/index.css'` | Processed through PostCSS/Tailwind pipeline and minified. |
+## 4. Asset Handling Principles
+- **Static Assets (Public Directory)**:
+  - Assets that should be served untouched without transformation, hashing, or bundling belong in the dedicated public directory and are referenced via absolute root paths.
+- **Processed Assets (Source Assets)**:
+  - Assets that require optimization, inlining, or content-hashing for cache busting belong in the source tree and should be imported directly in module code.
+- **Stylesheet Assets**:
+  - Stylesheets should be imported through module entry points to allow the bundler's CSS processing pipeline to handle minification and post-processing.
 
 ---
 
-## 5. Plugin & Build Optimization Rules
-
-- **Plugin Ordering**: Framework plugins (like `@vitejs/plugin-react`) should generally precede transform and utility plugins.
-- **Build Target**: Default to `"target": "esnext"` for modern evergreen browsers unless legacy browser polyfills are explicitly required.
+## 5. Build & Plugin Pipeline Strategy
+- **Plugin Ordering**: Framework-specific language/compiler plugins should execute before general utility or transformation plugins.
+- **Build Verification**: Validate build outputs using the project's defined build script, ensuring exit code 0 and clean asset generation.

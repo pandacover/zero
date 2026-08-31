@@ -1,7 +1,7 @@
 ---
 name: react
 type: domain_skill
-description: Domain conventions, decision rules, and architecture patterns for React and TypeScript applications.
+description: Domain conventions, decision rules, and architectural patterns for React and TypeScript applications.
 when_to_use:
   - Designing or refactoring React components, hooks, and component hierarchies.
   - Making architectural decisions around state management, effects, and composition.
@@ -11,7 +11,7 @@ how_to_access: Read via skill_discovery({ skillName: "react" }). Do NOT invoke a
 
 # React Domain Skill: Conventions & Decision Rules
 
-This skill provides architectural conventions and decision frameworks for writing idiomatic, robust React applications. Use these guidelines to make informed engineering choices.
+This skill provides generic, version-agnostic architectural conventions and decision frameworks for writing idiomatic, maintainable React applications.
 
 ---
 
@@ -19,49 +19,42 @@ This skill provides architectural conventions and decision frameworks for writin
 
 | State Type | When to Use | How to Implement |
 | :--- | :--- | :--- |
-| **Local UI State** | State isolated to a single component (e.g. open dropdown, active tab, form inputs). | `useState` or `useReducer` for complex transitions. |
-| **Derived State** | Values that can be computed from existing props or state. | **Do NOT put in state.** Compute inline during render, or wrap with `useMemo` only if computation is measurably expensive. |
+| **Local UI State** | State isolated to a single component (e.g. open dropdown, active tab, form inputs). | Component local state or reducer for complex transitions. |
+| **Derived State** | Values that can be computed from existing props or state. | **Do NOT store in state.** Compute inline during render, memoizing only if computation is measurably expensive. |
 | **Lifted State** | State needed by two or more sibling components. | Lift state up to their closest common ancestor and pass via props. |
-| **Global / Shared State** | App-wide cross-cutting state (auth user, theme, global notifications). | React Context for low-frequency updates; external stores (Zustand, Redux) for high-frequency updates. |
-| **Server Cache State** | Data fetched from backend APIs. | React Query / SWR / cache layer instead of manual `useEffect` + `useState` fetching. |
+| **Global / Shared State** | App-wide cross-cutting state (auth user, theme, global notifications). | Context for low-frequency updates; external stores for high-frequency updates. |
+| **Server Cache State** | Data fetched from backend APIs. | Dedicated cache/query layer instead of manual effect-based fetching. |
 
-> **Golden Rule**: Never duplicate or sync state that can be derived synchronously during render.
+> **Golden Rule**: Never duplicate or synchronize state that can be derived synchronously during render.
 
 ---
 
 ## 2. Effects vs. Event Handlers Decision Rules
 
 - **User Actions $\rightarrow$ Event Handlers**:
-  - Network requests, form submissions, navigation, or state updates triggered by user clicks or keypresses **belong in event handlers** (e.g. `handleSubmit`, `onClick`).
-  - *Anti-pattern*: Setting a state flag in an event handler just to trigger a `useEffect`.
-- **External System Sync $\rightarrow$ `useEffect`**:
-  - Use `useEffect` **only** to synchronize the component with external systems (e.g. DOM event listeners, WebSockets, third-party non-React widgets, timers).
-  - Always return a cleanup function to prevent memory leaks and dangling subscriptions.
+  - Network requests, form submissions, navigation, or state updates triggered by user interaction belong in event handlers.
+  - *Anti-pattern*: Setting state flags in event handlers solely to trigger an effect.
+- **External System Synchronization $\rightarrow$ Effects**:
+  - Use effects **only** to synchronize the component with external systems (e.g. DOM event listeners, WebSockets, external subscriptions, timers).
+  - Always clean up subscriptions and event listeners to prevent memory leaks.
 
 ---
 
 ## 3. Component Decomposition & Composition Conventions
 
 1. **Composition over Deep Prop Drilling**:
-   - Prefer passing components as `children` or render props rather than passing data down 4+ levels.
-2. **Container / Presentational Boundaries**:
+   - Prefer component composition (passing components as children or slots) over drilling props across deep component trees.
+2. **Container vs. Presentational Boundaries**:
    - Keep presentational components pure (props in, JSX out) and decoupled from data fetching.
-   - Colocate stateful controller/container logic in custom hooks (`use[FeatureName]`).
+   - Colocate stateful controller logic in custom hooks.
 3. **List Keys Convention**:
-   - Always use unique, stable entity IDs for `key` props (e.g. `<Item key={item.id} />`).
-   - Never use array indices as keys if items can be reordered, inserted, or filtered.
+   - Always use unique, stable entity identifiers for list item keys.
+   - Avoid array indices as keys when items can be reordered, inserted, or filtered.
 
 ---
 
-## 4. TypeScript & React Typing Conventions
+## 4. Component Typing Conventions
 
-- **Props Interface**: Define explicit interface named `[ComponentName]Props`:
-  ```tsx
-  interface UserCardProps {
-    user: User;
-    onSelect?: (userId: string) => void;
-    className?: string;
-  }
-  ```
-- **Event Handler Types**: Use standard React synthetic event types (`React.MouseEvent<HTMLButtonElement>`, `React.ChangeEvent<HTMLInputElement>`).
-- **Refs**: Explicitly type DOM refs (`useRef<HTMLInputElement | null>(null)`).
+- **Component Props**: Define explicit prop interfaces with clear types for children, event callbacks, and optional presentation classes.
+- **Event Handler Typing**: Type event callbacks with framework event definitions matching the element and interaction type.
+- **Ref Typing**: Explicitly type element and mutable refs to ensure compile-time null safety.
