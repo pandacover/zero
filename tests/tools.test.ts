@@ -69,6 +69,54 @@ describe("Coding Tools & Skills Suite", () => {
     expect(debugRes.data.documentation).toContain("reproduce");
   });
 
+  it("skillDiscoveryTool fetches multiple skills simultaneously via skillNames array or comma-separated list", async () => {
+    // 1. Fetching multiple skills via array
+    const rawMulti = await skillDiscoveryTool.execute({
+      skillNames: ["react", "vite", "typescript"],
+    });
+    const multiRes: ToolResponse = JSON.parse(rawMulti);
+
+    expect(multiRes.toolStatus).toBe("success");
+    expect(multiRes.outcome).toBe("success");
+    expect(multiRes.data.requestedSkills).toEqual(["react", "vite", "typescript"]);
+    expect(multiRes.data.foundCount).toBe(3);
+    expect(multiRes.data.missing).toEqual([]);
+    expect(multiRes.data.skills.length).toBe(3);
+    expect(multiRes.data.skills[0].skillName).toBe("react");
+    expect(multiRes.data.skills[0].documentation).toContain("React Domain Skill");
+    expect(multiRes.data.skills[1].skillName).toBe("vite");
+    expect(multiRes.data.skills[1].documentation).toContain("Vite Domain Skill");
+    expect(multiRes.data.skills[2].skillName).toBe("typescript");
+    expect(multiRes.data.skills[2].documentation).toContain("TypeScript Domain Skill");
+
+    // 2. Fetching via comma-separated string
+    const rawComma = await skillDiscoveryTool.execute({
+      skillName: "react, vite",
+    });
+    const commaRes: ToolResponse = JSON.parse(rawComma);
+    expect(commaRes.toolStatus).toBe("success");
+    expect(commaRes.outcome).toBe("success");
+    expect(commaRes.data.foundCount).toBe(2);
+
+    // 3. Partial match (some found, some missing)
+    const rawPartial = await skillDiscoveryTool.execute({
+      skillNames: ["react", "non_existent_skill_xyz"],
+    });
+    const partialRes: ToolResponse = JSON.parse(rawPartial);
+    expect(partialRes.toolStatus).toBe("success");
+    expect(partialRes.outcome).toBe("success");
+    expect(partialRes.data.foundCount).toBe(1);
+    expect(partialRes.data.missing).toEqual(["non_existent_skill_xyz"]);
+
+    // 4. None found
+    const rawNone = await skillDiscoveryTool.execute({
+      skillNames: ["fake_skill_1", "fake_skill_2"],
+    });
+    const noneRes: ToolResponse = JSON.parse(rawNone);
+    expect(noneRes.outcome).toBe("not_found");
+    expect(noneRes.error?.message).toContain("None of the requested skills");
+  });
+
   it("verifies all 15 skill files exist with valid front-matter and when_to_use", async () => {
     const skillNames = [
       "execute",

@@ -39,18 +39,27 @@ export function createToolResponse<T = any>(params: {
 
 /**
  * Skill Discovery tool: Discover and inspect available skills and tools along with their YAML front-matter.
+ * Supports inspecting a single skill or multiple skills simultaneously.
  */
 export const skillDiscoveryTool: Tool = {
   name: "skill_discovery",
   description:
-    "Discover and inspect available skills and tools along with their YAML front-matter (name, description, parameters, and metadata) to discover available capabilities.",
+    "Discover and inspect available skills and tools along with their YAML front-matter (name, description, parameters, and metadata). Supports inspecting a single skill or multiple skills simultaneously.",
   parameters: {
     type: "object",
     properties: {
+      skillNames: {
+        type: "array",
+        items: {
+          type: "string",
+        },
+        description:
+          "Optional list of skill names to inspect multiple skills at once (e.g., ['react', 'vite', 'typescript']).",
+      },
       skillName: {
         type: "string",
         description:
-          "Optional skill name to inspect a specific skill (e.g., 'execute', 'codebase_discovery', 'debugging', 'validation_of_work', 'react', 'vite', 'typescript', 'bash', 'glob', 'grep', 'read', 'write', 'edit'). If omitted, lists all skills.",
+          "Optional skill name (or comma-separated skill names) to inspect (e.g., 'debugging', 'codebase_discovery', 'react'). If omitted and skillNames is omitted, lists the catalog of all available skills and tools.",
       },
     },
   },
@@ -61,11 +70,123 @@ export const skillDiscoveryTool: Tool = {
       join(homedir(), ".zero/skills"), // Global user skills
     ];
 
-    const requestedSkill = args.skillName ? String(args.skillName).trim().toLowerCase() : null;
+    // Normalize requested skills from skillNames or skillName
+    let requestedSkills: string[] = [];
+    if (Array.isArray(args.skillNames)) {
+      requestedSkills = args.skillNames
+        .map((s) => String(s).trim().toLowerCase())
+        .filter(Boolean);
+    } else if (typeof args.skillNames === "string" && args.skillNames.trim()) {
+      requestedSkills = args.skillNames
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+    } else if (args.skillName && typeof args.skillName === "string" && args.skillName.trim()) {
+      requestedSkills = args.skillName
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+    }
+
+    const isMultiFetch = Array.isArray(args.skillNames) || requestedSkills.length > 1;
+
+    // Fast-path: When specific skill(s) are requested
+    if (requestedSkills.length > 0) {
+      const requestedSkillSet = new Set(requestedSkills);
+      const skillDocs: Record<string, string> = {};
+
+      for (const skillsDir of candidateDirs) {
+        if (!existsSync(skillsDir)) continue;
+
+        try {
+          const glob = new Bun.Glob("*/SKILL.md");
+          for (const relFile of glob.scanSync({ cwd: skillsDir })) {
+            const fullPath = join(skillsDir, relFile);
+            const skillFolder = dirname(relFile);
+            const skillKey = skillFolder.toLowerCase();
+
+            if (requestedSkillSet.has(skillKey) && !skillDocs[skillKey]) {
+              try {
+                skillDocs[skillKey] = await Bun.file(fullPath).text();
+              } catch {
+                // Ignore
+              }
+            }
+          }
+        } catch {
+          // Ignore
+        }
+      }
+
+      // If single skill requested and not in multi-fetch mode
+      if (!isMultiFetch && requestedSkills.length === 1) {
+        const target = requestedSkills[0]!;
+        if (skillDocs[target]) {
+          return createToolResponse({
+            outcome: "success",
+            data: {
+              skillName: target,
+              documentation: skillDocs[target],
+            },
+          });
+        }
+        return createToolResponse({
+          outcome: "not_found",
+          data: { requestedSkill: target },
+          error: {
+            type: "validation_error",
+            message: `Skill '${target}' was not found.`,
+          },
+        });
+      }
+
+      // Multi-fetch response format
+      const skillsResults = requestedSkills.map((name) => {
+        if (skillDocs[name]) {
+          return {
+            skillName: name,
+            found: true,
+            documentation: skillDocs[name],
+          };
+        }
+        return {
+          skillName: name,
+          found: false,
+        };
+      });
+
+      const foundCount = skillsResults.filter((r) => r.found).length;
+      const missing = skillsResults.filter((r) => !r.found).map((r) => r.skillName);
+
+      if (foundCount === 0) {
+        return createToolResponse({
+          outcome: "not_found",
+          data: {
+            requestedSkills,
+            skills: skillsResults,
+          },
+          error: {
+            type: "validation_error",
+            message: `None of the requested skills (${requestedSkills.join(", ")}) were found.`,
+          },
+        });
+      }
+
+      return createToolResponse({
+        outcome: "success",
+        data: {
+          requestedSkills,
+          foundCount,
+          missing,
+          skills: skillsResults,
+        },
+      });
+    }
+
+    // Default: Return catalog of all tools & skills
     const seenSkills = new Set<string>();
     const toolsCatalog: Array<{ name: string; description: string; frontMatter: string }> = [];
     const skillsCatalog: Array<{ name: string; type: string; description: string; frontMatter: string }> = [];
-    let fullSkillDoc: string | null = null;
 
     for (const skillsDir of candidateDirs) {
       if (!existsSync(skillsDir)) continue;
@@ -78,20 +199,6 @@ export const skillDiscoveryTool: Tool = {
           const skillKey = skillFolder.toLowerCase();
 
           if (seenSkills.has(skillKey)) continue;
-
-          if (requestedSkill && skillKey === requestedSkill) {
-            try {
-              fullSkillDoc = await Bun.file(fullPath).text();
-              seenSkills.add(skillKey);
-              break;
-            } catch {
-              // Ignore
-            }
-          }
-
-          if (requestedSkill && skillKey !== requestedSkill) {
-            continue;
-          }
 
           try {
             const content = await Bun.file(fullPath).text();
@@ -127,26 +234,6 @@ export const skillDiscoveryTool: Tool = {
       } catch {
         // Ignore directory read errors
       }
-    }
-
-    if (requestedSkill) {
-      if (fullSkillDoc) {
-        return createToolResponse({
-          outcome: "success",
-          data: {
-            skillName: requestedSkill,
-            documentation: fullSkillDoc,
-          },
-        });
-      }
-      return createToolResponse({
-        outcome: "not_found",
-        data: { requestedSkill },
-        error: {
-          type: "validation_error",
-          message: `Skill '${requestedSkill}' was not found.`,
-        },
-      });
     }
 
     return createToolResponse({
