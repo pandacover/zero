@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import {
   bashTool,
   defaultTools,
+  deleteTool,
   editTool,
   globTool,
   grepTool,
@@ -36,7 +37,7 @@ describe("Coding Tools & Skills Suite", () => {
     expect(res.toolStatus).toBe("success");
     expect(res.outcome).toBe("success");
     expect(res.data).toBeDefined();
-    expect(res.data.tools.length).toBeGreaterThanOrEqual(7);
+    expect(res.data.tools.length).toBeGreaterThanOrEqual(8);
     expect(res.data.skills.length).toBeGreaterThanOrEqual(7);
 
     const toolNames = res.data.tools.map((t: any) => t.name);
@@ -46,6 +47,7 @@ describe("Coding Tools & Skills Suite", () => {
     expect(toolNames).toContain("read");
     expect(toolNames).toContain("write");
     expect(toolNames).toContain("edit");
+    expect(toolNames).toContain("delete");
     expect(toolNames).toContain("skill_discovery");
 
     const skillNames = res.data.skills.map((s: any) => s.name);
@@ -67,7 +69,7 @@ describe("Coding Tools & Skills Suite", () => {
     expect(debugRes.data.documentation).toContain("reproduce");
   });
 
-  it("verifies all 14 skill files exist with valid front-matter and when_to_use", async () => {
+  it("verifies all 15 skill files exist with valid front-matter and when_to_use", async () => {
     const skillNames = [
       "execute",
       "skill_discovery",
@@ -83,6 +85,7 @@ describe("Coding Tools & Skills Suite", () => {
       "read",
       "write",
       "edit",
+      "delete",
     ];
 
     for (const name of skillNames) {
@@ -373,12 +376,66 @@ describe("Coding Tools & Skills Suite", () => {
     expect(zeroRes.data.matches).toEqual([]);
   });
 
+  it("deleteTool removes single files, rejects directories without recursive, and deletes recursively", async () => {
+    // 1. Delete single file
+    const sampleFile = `${TEST_DIR}/to_delete.txt`;
+    await writeTool.execute({ path: sampleFile, content: "temporary content" });
+    expect(existsSync(sampleFile)).toBe(true);
+
+    const deleteFileRes: ToolResponse = JSON.parse(
+      await deleteTool.execute({ path: sampleFile })
+    );
+    expect(deleteFileRes.toolStatus).toBe("success");
+    expect(deleteFileRes.outcome).toBe("success");
+    expect(deleteFileRes.data.targetType).toBe("file");
+    expect(existsSync(sampleFile)).toBe(false);
+
+    // 2. Delete non-existent path -> not_found
+    const missingRes: ToolResponse = JSON.parse(
+      await deleteTool.execute({ path: sampleFile })
+    );
+    expect(missingRes.toolStatus).toBe("success");
+    expect(missingRes.outcome).toBe("not_found");
+
+    // 3. Delete directory without recursive -> invalid_target
+    const sampleDir = `${TEST_DIR}/nested_dir`;
+    const nestedFile = `${sampleDir}/file.txt`;
+    await writeTool.execute({ path: nestedFile, content: "nested" });
+    expect(existsSync(sampleDir)).toBe(true);
+
+    const dirWithoutRec: ToolResponse = JSON.parse(
+      await deleteTool.execute({ path: sampleDir, recursive: false })
+    );
+    expect(dirWithoutRec.toolStatus).toBe("success");
+    expect(dirWithoutRec.outcome).toBe("invalid_target");
+    expect(dirWithoutRec.data.targetType).toBe("directory");
+    expect(dirWithoutRec.error?.message).toContain("recursive: true");
+    expect(existsSync(sampleDir)).toBe(true);
+
+    // 4. Delete directory with recursive: true -> success
+    const dirWithRec: ToolResponse = JSON.parse(
+      await deleteTool.execute({ path: sampleDir, recursive: true })
+    );
+    expect(dirWithRec.toolStatus).toBe("success");
+    expect(dirWithRec.outcome).toBe("success");
+    expect(dirWithRec.data.targetType).toBe("directory");
+    expect(existsSync(sampleDir)).toBe(false);
+
+    // 5. Deleting workspace root or system root -> tool_error
+    const rootRes: ToolResponse = JSON.parse(
+      await deleteTool.execute({ path: "." })
+    );
+    expect(rootRes.toolStatus).toBe("tool_error");
+    expect(rootRes.outcome).toBe("tool_error");
+    expect(rootRes.error?.message).toContain("prohibited");
+  });
+
   it("ToolRegistry registers tools and generates OpenAI JSON schemas", () => {
     const registry = new ToolRegistry(defaultTools);
-    expect(registry.getAll().length).toBe(7);
+    expect(registry.getAll().length).toBe(8);
 
     const openAITools = registry.toOpenAITools();
-    expect(openAITools.length).toBe(7);
+    expect(openAITools.length).toBe(8);
     expect(openAITools[0]?.type).toBe("function");
     expect(openAITools.map((t) => t.function.name)).toEqual([
       "skill_discovery",
@@ -388,6 +445,7 @@ describe("Coding Tools & Skills Suite", () => {
       "read",
       "write",
       "edit",
+      "delete",
     ]);
   });
 

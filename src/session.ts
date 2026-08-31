@@ -21,7 +21,7 @@ import type {
 } from "./types.ts";
 
 export const DEFAULT_SYSTEM_PROMPT =
-  "You have 7 callable tools: skill_discovery, bash, glob, grep, read, write, edit. " +
+  "You have 8 callable tools: skill_discovery, bash, glob, grep, read, write, edit, delete. " +
   "Skills (such as execute, codebase_discovery, debugging, validation_of_work, react, vite, typescript) " +
   "are knowledge guidelines that you read using skill_discovery({ skillName: '...' }), NOT tool calls. " +
   "Follow the execute workflow: understand task -> explore (use codebase_discovery guidelines) -> implement (use domain skills) -> validate (use validation_of_work via bash) -> debug if errors (use debugging guidelines) -> re-validate -> summarise. " +

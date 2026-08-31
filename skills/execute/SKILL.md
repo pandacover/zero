@@ -10,7 +10,7 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 
 # Execute Workflow Skill
 
-> **Note**: This is a process skill / guideline to follow mentally. Do not invoke `execute` as a tool call. Use callable tools (`skill_discovery`, `bash`, `glob`, `grep`, `read`, `write`, `edit`) to carry out each step.
+> **Note**: This is a process skill / guideline to follow mentally. Do not invoke `execute` as a tool call. Use callable tools (`skill_discovery`, `bash`, `glob`, `grep`, `read`, `write`, `edit`, `delete`) to carry out each step.
 
 ---
 
@@ -24,6 +24,7 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 2. **Mechanical Tool Recovery**:
    - When an `edit` fails (`outcome: "mismatch"`): **Immediately `read` the target file region before retrying.** Never blindly re-attempt `edit`.
    - When a `read` fails with `not_found`: Use `glob` to find the correct file path.
+   - When a `delete` fails with `invalid_target`: Re-invoke `delete` with `recursive: true` for directories.
    - When a `bash` command fails: Read the failing lines or `package.json` before retrying.
 
 ---
@@ -35,7 +36,7 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
         ↓
 [2. Explore Codebase]  ──(use "codebase_discovery", "glob", "grep", "read")
         ↓
-[3. Implement]         ──(use domain conventions: "react", "vite", "typescript", "edit", "write")
+[3. Implement]         ──(use domain conventions: "react", "vite", "typescript", "edit", "write", "delete")
         ↓
 [4. Validate Work]     ──(use "validation_of_work", "bash")
         ↓
@@ -60,8 +61,8 @@ how_to_access: Read via skill_discovery({ skillName: "execute" }). Do NOT invoke
 
 ### Step 3: Implement the Task
 - Consult appropriate domain conventions (`react`, `vite`, `typescript`) using `skill_discovery`.
-- Apply minimal, surgical modifications using `edit`, or create clean new files with `write`.
-- **Mechanical Recovery**: If `edit` fails, invoke `read` on the target lines before retrying.
+- Apply minimal, surgical modifications using `edit`, create clean new files with `write`, or remove obsolete files/folders with `delete`.
+- **Mechanical Recovery**: If `edit` fails, invoke `read` on the target lines before retrying. If `delete` fails on a directory, supply `recursive: true`.
 
 ### Step 4: Validate the Work (`validation_of_work`)
 - Read `skills/validation_of_work/SKILL.md` via `skill_discovery({ skillName: "validation_of_work" })`.

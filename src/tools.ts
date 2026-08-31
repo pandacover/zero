@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import type {
@@ -1071,6 +1071,126 @@ export const editTool: Tool = {
 };
 
 /**
+ * Delete tool: Delete a file or directory on the filesystem.
+ */
+export const deleteTool: Tool = {
+  name: "delete",
+  description:
+    "Delete a file or directory on the filesystem. Supports deleting single files or directories recursively.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description: "Path to the file or directory to delete.",
+      },
+      recursive: {
+        type: "boolean",
+        description: "Whether to recursively delete directories (defaults to false for directories).",
+      },
+    },
+    required: ["path"],
+  },
+  execute: async (args: Record<string, any>): Promise<string> => {
+    const rawPath = String(args.path || "").trim();
+    if (!rawPath) {
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "validation_error",
+          message: "'path' parameter is required for the delete tool.",
+        },
+      });
+    }
+
+    const targetPath = resolve(rawPath);
+    const workspaceRoot = process.cwd();
+    const relPath = relative(workspaceRoot, targetPath).replace(/\\/g, "/") || rawPath;
+
+    // Safety checks: Prevent deleting root filesystem or the workspace root directory itself
+    if (targetPath === resolve("/") || targetPath === workspaceRoot || relPath === "." || relPath === "") {
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "validation_error",
+          message: "Deleting the workspace root directory or system root is prohibited.",
+        },
+      });
+    }
+
+    if (!existsSync(targetPath)) {
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "not_found",
+        data: {
+          path: relPath,
+        },
+        error: {
+          type: "filesystem_error",
+          message: `Path '${relPath}' does not exist.`,
+        },
+      });
+    }
+
+    try {
+      const stats = statSync(targetPath);
+      const isDir = stats.isDirectory();
+      const recursive = Boolean(args.recursive);
+
+      if (isDir) {
+        if (!recursive) {
+          return createToolResponse({
+            toolStatus: "success",
+            outcome: "invalid_target",
+            data: {
+              path: relPath,
+              targetType: "directory",
+            },
+            error: {
+              type: "validation_error",
+              message: `'${relPath}' is a directory. Set 'recursive: true' to delete a directory.`,
+            },
+          });
+        }
+        rmSync(targetPath, { recursive: true, force: true });
+        return createToolResponse({
+          toolStatus: "success",
+          outcome: "success",
+          data: {
+            path: relPath,
+            targetType: "directory",
+            message: `Successfully deleted directory '${relPath}'.`,
+          },
+        });
+      }
+
+      // Single file deletion
+      rmSync(targetPath, { force: true });
+      return createToolResponse({
+        toolStatus: "success",
+        outcome: "success",
+        data: {
+          path: relPath,
+          targetType: "file",
+          message: `Successfully deleted file '${relPath}'.`,
+        },
+      });
+    } catch (err: any) {
+      return createToolResponse({
+        toolStatus: "tool_error",
+        outcome: "tool_error",
+        error: {
+          type: "filesystem_error",
+          message: `Error deleting '${relPath}': ${err.message || String(err)}`,
+        },
+      });
+    }
+  },
+};
+
+/**
  * Default coding & skill tools collection.
  */
 export const defaultTools: Tool[] = [
@@ -1081,6 +1201,7 @@ export const defaultTools: Tool[] = [
   readTool,
   writeTool,
   editTool,
+  deleteTool,
 ];
 
 /**
