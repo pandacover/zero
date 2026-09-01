@@ -1,7 +1,7 @@
 import { Context, Effect, Layer } from "effect";
 import { OpenAICompatibleClient } from "../client.ts";
 import { ToolRegistry } from "../tools.ts";
-import type { LLMResponse, Message, ProviderConfig, Tool } from "../types.ts";
+import type { LLMResponse, LLMStreamCallbacks, Message, ProviderConfig, Tool } from "../types.ts";
 import { ModelInvocationError, ToolExecutionError } from "./errors.ts";
 
 /**
@@ -13,7 +13,8 @@ export class LLMService extends Context.Tag("LLMService")<
     readonly callChatCompletion: (
       messages: Message[],
       config: ProviderConfig,
-      tools?: Tool[]
+      tools?: Tool[],
+      callbacks?: LLMStreamCallbacks
     ) => Effect.Effect<LLMResponse, ModelInvocationError>;
   }
 >() {}
@@ -39,9 +40,9 @@ export function createLiveLLMLayer(
   client: OpenAICompatibleClient = new OpenAICompatibleClient()
 ): Layer.Layer<LLMService> {
   return Layer.succeed(LLMService, {
-    callChatCompletion: (messages, config, tools) =>
+    callChatCompletion: (messages, config, tools, callbacks) =>
       Effect.tryPromise({
-        try: () => client.callChatCompletion(messages, config, tools),
+        try: () => client.callChatCompletion(messages, config, tools, callbacks),
         catch: (err) =>
           new ModelInvocationError({
             message: err instanceof Error ? err.message : String(err),

@@ -69,8 +69,35 @@ export function runAgent(
         // 2. Call LLM with current working history
         const currentHistory = yield* Ref.get(historyRef);
         const toolsList = toolService.getTools();
+        let reasoningEmitted = false;
+        let responseStarted = false;
+
+        const callbacks = {
+          onReasoningComplete: (thought: string) => {
+            if (!reasoningEmitted) {
+              reasoningEmitted = true;
+              emit.single({
+                type: "think:complete",
+                thought,
+                durationMs: Date.now() - stepStart,
+              });
+            }
+          },
+          onResponseStart: () => {
+            if (!responseStarted) {
+              responseStarted = true;
+              emit.single({ type: "response:start" });
+            }
+          },
+        };
+
         const response = yield* llm
-          .callChatCompletion(currentHistory, config, toolsList.length > 0 ? toolsList : undefined)
+          .callChatCompletion(
+            currentHistory,
+            config,
+            toolsList.length > 0 ? toolsList : undefined,
+            callbacks
+          )
           .pipe(
             Effect.catchAll((err) => {
               emit.single({
@@ -85,8 +112,8 @@ export function runAgent(
 
         const stepDuration = Date.now() - stepStart;
 
-        // 3. Emit thinking event if reasoning content was provided
-        if (response.reasoning) {
+        // 3. Emit thinking event if reasoning content was provided but not yet emitted
+        if (response.reasoning && !reasoningEmitted) {
           emit.single({
             type: "think:complete",
             thought: response.reasoning,

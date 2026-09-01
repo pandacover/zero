@@ -109,6 +109,12 @@ export interface LLMResponse {
   usage?: TokenUsage;
 }
 
+export interface LLMStreamCallbacks {
+  readonly onReasoningStart?: () => void;
+  readonly onReasoningComplete?: (thought: string) => void;
+  readonly onResponseStart?: () => void;
+}
+
 export type AgentEvent =
   | { type: "think:start" }
   | { type: "think:complete"; thought: string; durationMs: number }

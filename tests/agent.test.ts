@@ -312,6 +312,61 @@ describe("Agent Effect Stream & Event Processing", () => {
     // tool:complete must arrive at least 40ms after tool:start, proving events stream live
     expect(toolComplete!.elapsedMs - toolStart!.elapsedMs).toBeGreaterThanOrEqual(40);
   });
+
+  it("emits think:complete and response:start sequentially during streaming before response:complete", async () => {
+    const timestamps: Array<{ type: string; elapsedMs: number }> = [];
+
+    const mockStreamingClient: OpenAICompatibleClient = {
+      callChatCompletion: async (_messages: any, _config: any, _tools?: any, callbacks?: any) => {
+        // 1. Simulate reasoning phase
+        await new Promise((r) => setTimeout(r, 20));
+        callbacks?.onReasoningComplete?.("I am pondering the problem.");
+        callbacks?.onResponseStart?.();
+
+        // 2. Simulate response generation phase
+        await new Promise((r) => setTimeout(r, 50));
+        return {
+          content: "Here is the final answer.",
+          reasoning: "I am pondering the problem.",
+        };
+      },
+    } as any;
+
+    const reasoningConfig: ProviderConfig = {
+      ...dummyConfig,
+      supportsReasoning: true,
+    };
+
+    const stream = runAgent("test query", [], reasoningConfig);
+    const layer = createAgentLayer({ client: mockStreamingClient });
+
+    const start = Date.now();
+    await Effect.runPromise(
+      stream.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            timestamps.push({ type: event.type, elapsedMs: Date.now() - start });
+          })
+        ),
+        Effect.provide(layer)
+      )
+    );
+
+    const thinkStart = timestamps.find((t) => t.type === "think:start");
+    const thinkComplete = timestamps.find((t) => t.type === "think:complete");
+    const responseStart = timestamps.find((t) => t.type === "response:start");
+    const responseComplete = timestamps.find((t) => t.type === "response:complete");
+
+    expect(thinkStart).toBeDefined();
+    expect(thinkComplete).toBeDefined();
+    expect(responseStart).toBeDefined();
+    expect(responseComplete).toBeDefined();
+
+    // Verification: think:complete must arrive BEFORE response:complete with a clear time gap
+    expect(responseComplete!.elapsedMs - thinkComplete!.elapsedMs).toBeGreaterThanOrEqual(40);
+    // response:start must be emitted when reasoning completes
+    expect(responseStart!.elapsedMs).toBeGreaterThanOrEqual(thinkComplete!.elapsedMs);
+  });
 });
 
 describe("History Normalization (buildWorkingHistory)", () => {
