@@ -8,9 +8,10 @@ export class Spinner {
   private currentText = "";
   private isSpinning = false;
 
-  start(text: string): this {
+  start(text: string = ""): this {
     this.currentText = text;
     if (this.isSpinning) {
+      this.render();
       return this;
     }
     this.isSpinning = true;
@@ -27,7 +28,7 @@ export class Spinner {
     return this;
   }
 
-  update(text: string): this {
+  update(text: string = ""): this {
     this.currentText = text;
     if (this.isSpinning) {
       this.render();
@@ -40,8 +41,10 @@ export class Spinner {
       return;
     }
     const frame = this.frames[this.frameIndex];
-    // Cyan frame with text
-    const line = `\r\x1b[36m${frame}\x1b[0m ${this.currentText}\x1b[K`;
+    // Cyan frame with optional text
+    const line = this.currentText
+      ? `\r\x1b[36m${frame}\x1b[0m ${this.currentText}\x1b[K`
+      : `\r\x1b[36m${frame}\x1b[0m\x1b[K`;
     process.stdout.write(line);
   }
 

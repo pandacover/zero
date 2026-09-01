@@ -579,7 +579,7 @@ export async function runCLI(): Promise<void> {
               }
 
               case "response:start":
-                spinner.start("Generating response...");
+                spinner.start("");
                 break;
 
               case "response:complete":

@@ -52,7 +52,6 @@ export async function exampleUsage() {
             console.log(`  [Tool Result (${event.durationMs}ms)]: ${event.result.slice(0, 100)}...`);
             break;
           case "response:start":
-            console.log("  [Loader] Generating response...");
             break;
           case "response:complete":
             console.log(`\n\x1b[32m[Response]\x1b[0m\n${event.content}`);
