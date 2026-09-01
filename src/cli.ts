@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { createInterface } from "node:readline/promises";
-import { Agent } from "./agent.ts";
+import { runAgent } from "./agent.ts";
 import {
   getGlobalDefaultProvider,
   loadProviderConfig,
@@ -485,7 +485,7 @@ export async function runCLI(): Promise<void> {
     const turn = activeSession.startTurn(trimmed);
 
     try {
-      const generator = Agent.run(
+      const generator = runAgent(
         trimmed,
         priorHistory,
         providerConfig,

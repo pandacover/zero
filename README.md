@@ -40,7 +40,7 @@ bun test
 ### 3. Programmatic Usage
 
 ```typescript
-import { Agent, Session, getDefaultProvider, defaultTools } from "./src/index.ts";
+import { runAgent, Session, getDefaultProvider, defaultTools } from "./src/index.ts";
 
 const session = new Session({
   provider: getDefaultProvider(),
@@ -49,7 +49,7 @@ const session = new Session({
 
 const query = "Search for files ending in .ts using glob and summarize them";
 
-const generator = Agent.run(query, session.getHistory(), session.getProvider(), {
+const generator = runAgent(query, session.getHistory(), session.getProvider(), {
   tools: session.getTools(),
 });
 

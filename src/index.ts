@@ -11,7 +11,7 @@ export * from "./session.ts";
 export * from "./agent.ts";
 export * from "./ui/spinner.ts";
 
-import { Agent } from "./agent.ts";
+import { runAgent } from "./agent.ts";
 import { getGlobalDefaultProvider } from "./config.ts";
 import { Session } from "./session.ts";
 import { defaultTools } from "./tools.ts";
@@ -28,7 +28,7 @@ export async function exampleUsage() {
   const query = "List the files in the current directory using glob.";
   console.log(`\x1b[1m\x1b[34m[Query]\x1b[0m ${query}`);
 
-  const generator = Agent.run(query, session.getHistory(), session.getProvider(), {
+  const generator = runAgent(query, session.getHistory(), session.getProvider(), {
     tools: session.getTools(),
   });
 

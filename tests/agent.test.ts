@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { Agent } from "../src/agent.ts";
+import { Agent, runAgent } from "../src/agent.ts";
 import { OpenAICompatibleClient } from "../src/client.ts";
 import {
   getGlobalDefaultProvider,
@@ -65,7 +65,7 @@ describe("Agent Generator & Event Streaming", () => {
     });
 
     const events: AgentEvent[] = [];
-    const generator = Agent.run("Hello!", [], dummyConfig, {
+    const generator = runAgent("Hello!", [], dummyConfig, {
       client: mockClient,
       tools: defaultTools,
     });
@@ -100,7 +100,7 @@ describe("Agent Generator & Event Streaming", () => {
     };
 
     const events: AgentEvent[] = [];
-    const generator = Agent.run("What is 6 * 7?", [], reasoningConfig, {
+    const generator = runAgent("What is 6 * 7?", [], reasoningConfig, {
       client: mockClient,
     });
 
@@ -147,7 +147,7 @@ describe("Agent Generator & Event Streaming", () => {
     });
 
     const events: AgentEvent[] = [];
-    const generator = Agent.run("Find package.json", [], dummyConfig, {
+    const generator = runAgent("Find package.json", [], dummyConfig, {
       client: mockClient,
       tools: defaultTools,
     });
@@ -202,7 +202,7 @@ describe("Agent Generator & Event Streaming", () => {
     });
 
     const events: AgentEvent[] = [];
-    const generator = Agent.run("Check ts files", [], dummyConfig, {
+    const generator = runAgent("Check ts files", [], dummyConfig, {
       client: mockClient,
       tools: defaultTools,
     });
@@ -217,6 +217,10 @@ describe("Agent Generator & Event Streaming", () => {
     expect(assistantMsg).toBeDefined();
     expect(assistantMsg?.thought).toBe("Let me check the files first before making changes.");
   });
+
+  it("exports Agent.run as a backward-compatible alias to runAgent", () => {
+    expect(Agent.run).toBe(runAgent);
+  });
 });
 
 describe("Session Management & Detachment", () => {
@@ -230,7 +234,7 @@ describe("Session Management & Detachment", () => {
     const mockClient = new TestLLMClient();
     mockClient.enqueue({ content: "First answer" });
 
-    const generator = Agent.run("Query 1", session.getHistory(), session.getProvider(), {
+    const generator = runAgent("Query 1", session.getHistory(), session.getProvider(), {
       client: mockClient,
       systemPrompt: session.getSystemPrompt(),
     });

@@ -17,17 +17,16 @@ export interface AgentRunOptions {
   client?: OpenAICompatibleClient;
 }
 
-export class Agent {
-  /**
-   * Pure AsyncGenerator that runs the agent loop.
-   * Emits discrete completed events (think, tool, response, done, error).
-   */
-  static async *run(
-    query: string,
-    history: readonly Message[],
-    config: ProviderConfig,
-    options?: AgentRunOptions
-  ): AsyncGenerator<AgentEvent, AgentResult, void> {
+/**
+ * Pure AsyncGenerator that runs the agent loop.
+ * Emits discrete completed events (think, tool, response, done, error).
+ */
+export async function* runAgent(
+  query: string,
+  history: readonly Message[],
+  config: ProviderConfig,
+  options?: AgentRunOptions
+): AsyncGenerator<AgentEvent, AgentResult, void> {
     const totalStart = Date.now();
     const client = options?.client ?? new OpenAICompatibleClient();
     const tools = options?.tools;
@@ -227,5 +226,11 @@ export class Agent {
       };
       throw err;
     }
-  }
 }
+
+/**
+ * Compatibility namespace for runAgent.
+ */
+export const Agent = {
+  run: runAgent,
+};
