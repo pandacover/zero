@@ -79,20 +79,18 @@ export function Composer({
         justifyContent="space-between"
         alignItems="center"
         width="100%"
-        paddingTop={0}
-        paddingBottom={0}
+        marginTop={1}
       >
         <text fg="#777777">
           {statusText ? statusText : `${sessionId} · ${providerName} (${modelName})`}
         </text>
         <box
-          borderStyle="rounded"
-          borderColor={isBusy ? "#555555" : "green"}
+          backgroundColor={isBusy ? "#4b5563" : "#22c55e"}
           paddingLeft={1}
           paddingRight={1}
           onMouseDown={isBusy ? onInterrupt : handleSubmit}
         >
-          <text fg={isBusy ? "#888888" : "green"}>
+          <text fg={isBusy ? "#ffffff" : "#000000"}>
             <b>{isBusy ? "Stop [Esc]" : "Send ↵"}</b>
           </text>
         </box>
