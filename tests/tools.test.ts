@@ -3,14 +3,17 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   bashTool,
+  createTool,
   defaultTools,
   deleteTool,
   editTool,
   globTool,
   grepTool,
   readTool,
+  resolveToolPath,
   skillDiscoveryTool,
   ToolRegistry,
+  validateFileTarget,
   writeTool,
 } from "../src/tools.ts";
 import type { ToolResponse } from "../src/types.ts";
@@ -627,5 +630,86 @@ describe("Coding Tools & Skills Suite", () => {
     expect(skillCallRes.outcome).toBe("tool_error");
     expect(skillCallRes.data.attemptedName).toBe("codebase_discovery");
     expect(skillCallRes.error?.message).toContain("process/domain skill");
+  });
+
+  it("createTool utility generates schema, validates required arguments, normalizes responses, and catches exceptions", async () => {
+    // 1. Tool creation with required parameters
+    const customTool = createTool({
+      name: "custom_tester",
+      description: "Testing createTool utility functionality.",
+      parameters: {
+        properties: {
+          query: { type: "string", description: "Search query" },
+          limit: { type: "number", description: "Max results" },
+        },
+        required: ["query"],
+      },
+      execute: async (args: { query: string; limit?: number }) => {
+        if (args.query === "throw_error") {
+          throw new Error("Simulated tool crash");
+        }
+        return {
+          outcome: "success",
+          data: { query: args.query, limit: args.limit ?? 10 },
+        };
+      },
+    });
+
+    // Check schema
+    expect(customTool.name).toBe("custom_tester");
+    expect(customTool.parameters.type).toBe("object");
+    expect(customTool.parameters.required).toEqual(["query"]);
+
+    // Missing required parameter -> tool_error
+    const missingRes: ToolResponse = JSON.parse(await customTool.execute({ limit: 5 }));
+    expect(missingRes.toolStatus).toBe("tool_error");
+    expect(missingRes.outcome).toBe("tool_error");
+    expect(missingRes.error?.type).toBe("validation_error");
+    expect(missingRes.error?.message).toContain("'query' parameter is required for the custom_tester tool");
+
+    // Success execution returning object -> wrapped via createToolResponse
+    const successRes: ToolResponse = JSON.parse(await customTool.execute({ query: "hello", limit: 3 }));
+    expect(successRes.toolStatus).toBe("success");
+    expect(successRes.outcome).toBe("success");
+    expect(successRes.data).toEqual({ query: "hello", limit: 3 });
+
+    // Exception inside execute -> caught and wrapped as tool_invocation_error
+    const crashRes: ToolResponse = JSON.parse(await customTool.execute({ query: "throw_error" }));
+    expect(crashRes.toolStatus).toBe("tool_error");
+    expect(crashRes.outcome).toBe("tool_error");
+    expect(crashRes.error?.type).toBe("tool_invocation_error");
+    expect(crashRes.error?.message).toContain("Simulated tool crash");
+  });
+
+  it("resolveToolPath and validateFileTarget handle paths and target validations consistently", () => {
+    // resolveToolPath normalizes relative POSIX path
+    const res = resolveToolPath("src/tools.ts");
+    expect(res.relPath).toBe("src/tools.ts");
+    expect(res.absPath).toContain("src");
+
+    // validateFileTarget on existing file
+    const targetFile = validateFileTarget("src/tools.ts", { toolName: "read" });
+    expect(targetFile.ok).toBe(true);
+    if (targetFile.ok) {
+      expect(targetFile.exists).toBe(true);
+      expect(targetFile.isDirectory).toBe(false);
+    }
+
+    // validateFileTarget on directory when not allowed
+    const targetDir = validateFileTarget("src", { toolName: "read" });
+    expect(targetDir.ok).toBe(false);
+    if (!targetDir.ok) {
+      const parsed: ToolResponse = JSON.parse(targetDir.response);
+      expect(parsed.outcome).toBe("invalid_target");
+      expect(parsed.data.targetType).toBe("directory");
+    }
+
+    // validateFileTarget on non-existent file
+    const targetMissing = validateFileTarget("non_existent_file.xyz", { toolName: "edit" });
+    expect(targetMissing.ok).toBe(false);
+    if (!targetMissing.ok) {
+      const parsed: ToolResponse = JSON.parse(targetMissing.response);
+      expect(parsed.outcome).toBe("not_found");
+    }
   });
 });

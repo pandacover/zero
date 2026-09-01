@@ -7,6 +7,7 @@ import type {
   Tool,
   ToolErrorType,
   ToolExecutionDetails,
+  ToolParameterProperty,
   ToolResponse,
   ToolStatus,
 } from "./types.ts";
@@ -38,15 +39,168 @@ export function createToolResponse<T = any>(params: {
 }
 
 /**
+ * Resolves a raw target path to absolute path and normalized relative POSIX path.
+ */
+export function resolveToolPath(rawPath: string): { absPath: string; relPath: string } {
+  const absPath = resolve(rawPath);
+  const relPath = relative(process.cwd(), absPath).replace(/\\/g, "/") || rawPath;
+  return { absPath, relPath };
+}
+
+export type FileTargetResult =
+  | { ok: true; absPath: string; relPath: string; exists: boolean; isDirectory: boolean }
+  | { ok: false; response: string };
+
+/**
+ * Validates a filesystem target for file-oriented tools (read, edit, delete).
+ */
+export function validateFileTarget(
+  rawPath: string,
+  options: {
+    toolName: string;
+    mustExist?: boolean;
+    allowDirectory?: boolean;
+  }
+): FileTargetResult {
+  const { absPath, relPath } = resolveToolPath(rawPath);
+  const exists = existsSync(absPath);
+
+  if (options.mustExist !== false && !exists) {
+    return {
+      ok: false,
+      response: createToolResponse({
+        toolStatus: "success",
+        outcome: "not_found",
+        data: { path: relPath },
+        error: {
+          type: "filesystem_error",
+          message: `File '${relPath}' does not exist.`,
+        },
+      }),
+    };
+  }
+
+  if (exists) {
+    try {
+      const stats = statSync(absPath);
+      if (stats.isDirectory() && !options.allowDirectory) {
+        const action = options.toolName === "edit" ? "edit" : options.toolName === "read" ? "read" : "operate on";
+        return {
+          ok: false,
+          response: createToolResponse({
+            toolStatus: "success",
+            outcome: "invalid_target",
+            data: {
+              path: relPath,
+              targetType: "directory",
+            },
+            error: {
+              type: "filesystem_error",
+              message: `'${relPath}' is a directory, not a file. The '${options.toolName}' tool can only ${action} files.`,
+            },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        absPath,
+        relPath,
+        exists: true,
+        isDirectory: stats.isDirectory(),
+      };
+    } catch {
+      // Fall through if stat fails
+    }
+  }
+
+  return {
+    ok: true,
+    absPath,
+    relPath,
+    exists,
+    isDirectory: false,
+  };
+}
+
+export interface CreateToolOptions<TArgs extends Record<string, any> = Record<string, any>> {
+  name: string;
+  description: string;
+  parameters: {
+    properties: Record<string, ToolParameterProperty>;
+    required?: string[];
+    requiredMessage?: (missingParam: string) => string;
+  };
+  execute: (
+    args: TArgs
+  ) => Promise<string | Parameters<typeof createToolResponse>[0]> | string | Parameters<typeof createToolResponse>[0];
+}
+
+/**
+ * Universal Tool factory enforcing standard schemas, automatic parameter validation,
+ * top-level exception wrapping, and response normalization.
+ */
+export function createTool<TArgs extends Record<string, any> = Record<string, any>>(
+  def: CreateToolOptions<TArgs>
+): Tool {
+  return {
+    name: def.name,
+    description: def.description,
+    parameters: {
+      type: "object",
+      properties: def.parameters.properties,
+      required: def.parameters.required,
+    },
+    execute: async (rawArgs: Record<string, any>): Promise<string> => {
+      // 1. Automatic required parameter checking
+      if (def.parameters.required) {
+        for (const req of def.parameters.required) {
+          const val = rawArgs[req];
+          if (val === undefined || val === null || (typeof val === "string" && !val.trim())) {
+            const message = def.parameters.requiredMessage
+              ? def.parameters.requiredMessage(req)
+              : `'${req}' parameter is required for the ${def.name} tool.`;
+            return createToolResponse({
+              toolStatus: "tool_error",
+              outcome: "tool_error",
+              error: {
+                type: "validation_error",
+                message,
+              },
+            });
+          }
+        }
+      }
+
+      // 2. Safe execution with automatic error wrapping
+      try {
+        const res = await def.execute(rawArgs as TArgs);
+        if (typeof res === "string") {
+          return res;
+        }
+        return createToolResponse(res);
+      } catch (err: any) {
+        return createToolResponse({
+          toolStatus: "tool_error",
+          outcome: "tool_error",
+          error: {
+            type: "tool_invocation_error",
+            message: `Error executing tool '${def.name}': ${err.message || String(err)}`,
+          },
+        });
+      }
+    },
+  };
+}
+
+/**
  * Skill Discovery tool: Discover and inspect available skills and tools along with their YAML front-matter.
  * Supports inspecting a single skill or multiple skills simultaneously.
  */
-export const skillDiscoveryTool: Tool = {
+export const skillDiscoveryTool = createTool({
   name: "skill_discovery",
   description:
     "Discover and inspect available skills and tools along with their YAML front-matter (name, description, parameters, and metadata). Supports inspecting a single skill or multiple skills simultaneously.",
   parameters: {
-    type: "object",
     properties: {
       skillNames: {
         type: "array",
@@ -248,7 +402,7 @@ export const skillDiscoveryTool: Tool = {
       },
     });
   },
-};
+});
 
 /**
  * Resolves a native POSIX Bash/sh executable across Unix, Linux, macOS, and Windows.
@@ -354,12 +508,11 @@ export function isDisallowedBashFileWrite(command: string): { isDisallowed: bool
  * Bash tool: Execute shell commands sandboxed to the project workspace directory.
  * Fully OS-agnostic: executes with full POSIX Bash semantics across Windows, macOS, and Linux.
  */
-export const bashTool: Tool = {
+export const bashTool = createTool({
   name: "bash",
   description:
     "Execute a shell command sandboxed within the project workspace (e.g. 'bun test', 'npm run build', 'tsc', 'git status'). OS-agnostic: resolves POSIX Bash syntax across Windows, Linux, and macOS. Creating or modifying files via bash is prohibited (use 'write' or 'edit' instead).",
   parameters: {
-    type: "object",
     properties: {
       command: {
         type: "string",
@@ -374,17 +527,6 @@ export const bashTool: Tool = {
   },
   execute: async (args: Record<string, any>): Promise<string> => {
     const rawCommand = String(args.command || "").trim();
-    if (!rawCommand) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "validation_error",
-          message: "'command' parameter is required for the bash tool.",
-        },
-      });
-    }
-
     const check = isDisallowedBashFileWrite(rawCommand);
     if (check.isDisallowed) {
       return createToolResponse({
@@ -575,16 +717,15 @@ export const bashTool: Tool = {
       });
     }
   },
-};
+});
 
 /**
  * Glob tool: Find files matching a glob pattern.
  */
-export const globTool: Tool = {
+export const globTool = createTool({
   name: "glob",
   description: "Find files matching a glob pattern (e.g. '**/*.ts', 'src/**/*', '*.json').",
   parameters: {
-    type: "object",
     properties: {
       pattern: {
         type: "string",
@@ -597,89 +738,73 @@ export const globTool: Tool = {
     },
     required: ["pattern"],
   },
-  execute: async (args: Record<string, any>): Promise<string> => {
+  execute: async (args: { pattern: string; path?: string }) => {
     const pattern = String(args.pattern || "*.*");
-    const targetPath = resolve(String(args.path || "."));
+    const { absPath, relPath } = resolveToolPath(args.path || ".");
 
-    if (!existsSync(targetPath)) {
-      const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
-      return createToolResponse({
+    if (!existsSync(absPath)) {
+      return {
         toolStatus: "success",
         outcome: "not_found",
         data: {
-          path: rel,
+          path: relPath,
           pattern,
         },
         error: {
           type: "filesystem_error",
-          message: `Directory '${rel}' does not exist.`,
+          message: `Directory '${relPath}' does not exist.`,
         },
-      });
+      };
     }
 
-    try {
-      const stats = statSync(targetPath);
-      if (stats.isFile()) {
-        const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || targetPath;
-        return createToolResponse({
-          toolStatus: "success",
-          outcome: "invalid_target",
-          data: {
-            path: rel,
-            targetType: "file",
-          },
-          error: {
-            type: "filesystem_error",
-            message: `Path '${rel}' is a file, not a directory.`,
-          },
-        });
-      }
-
-      const glob = new Bun.Glob(pattern);
-      const matches: string[] = [];
-
-      for (const file of glob.scanSync({ cwd: targetPath, onlyFiles: false })) {
-        matches.push(file.replace(/\\/g, "/"));
-        if (matches.length >= 200) {
-          matches.push("... (results capped at 200 matches)");
-          break;
-        }
-      }
-
-      const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
-
-      // 0 matches in an existing directory is a valid empty query result (success), not an error
-      return createToolResponse({
+    const stats = statSync(absPath);
+    if (stats.isFile()) {
+      return {
         toolStatus: "success",
-        outcome: "success",
+        outcome: "invalid_target",
         data: {
-          path: rel,
-          pattern,
-          matches,
-          count: matches.length,
+          path: relPath,
+          targetType: "file",
         },
-      });
-    } catch (err: any) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
         error: {
-          type: "tool_invocation_error",
-          message: `Error scanning glob '${pattern}': ${err.message || String(err)}`,
+          type: "filesystem_error",
+          message: `Path '${relPath}' is a file, not a directory.`,
         },
-      });
+      };
     }
+
+    const glob = new Bun.Glob(pattern);
+    const matches: string[] = [];
+
+    for (const file of glob.scanSync({ cwd: absPath, onlyFiles: false })) {
+      matches.push(file.replace(/\\/g, "/"));
+      if (matches.length >= 200) {
+        matches.push("... (results capped at 200 matches)");
+        break;
+      }
+    }
+
+    // 0 matches in an existing directory is a valid empty query result (success), not an error
+    return {
+      toolStatus: "success",
+      outcome: "success",
+      data: {
+        path: relPath,
+        pattern,
+        matches,
+        count: matches.length,
+      },
+    };
   },
-};
+});
 
 /**
  * Grep tool: Search text or regex across codebase files.
  */
-export const grepTool: Tool = {
+export const grepTool = createTool({
   name: "grep",
   description: "Search for a regex or text pattern across files with line numbers and snippets.",
   parameters: {
-    type: "object",
     properties: {
       pattern: {
         type: "string",
@@ -699,120 +824,95 @@ export const grepTool: Tool = {
       },
     },
     required: ["pattern"],
+    requiredMessage: (param) => `'${param}' parameter is required for grep.`,
   },
-  execute: async (args: Record<string, any>): Promise<string> => {
+  execute: async (args: { pattern: string; path?: string; include?: string; caseSensitive?: boolean }) => {
     const pattern = String(args.pattern || "");
-    const targetPath = resolve(String(args.path || "."));
+    const { absPath, relPath } = resolveToolPath(args.path || ".");
     const includePattern = args.include ? String(args.include) : null;
     const caseSensitive = Boolean(args.caseSensitive);
 
-    if (!pattern) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "validation_error",
-          message: "'pattern' parameter is required for grep.",
-        },
-      });
-    }
-
-    if (!existsSync(targetPath)) {
-      const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
-      return createToolResponse({
+    if (!existsSync(absPath)) {
+      return {
         toolStatus: "success",
         outcome: "not_found",
         data: {
-          path: rel,
+          path: relPath,
           pattern,
         },
         error: {
           type: "filesystem_error",
-          message: `Path '${rel}' does not exist.`,
+          message: `Path '${relPath}' does not exist.`,
         },
-      });
+      };
     }
 
-    try {
-      const flags = caseSensitive ? "g" : "gi";
-      const regex = new RegExp(pattern, flags);
-      const matches: Array<{ file: string; line: number; content: string }> = [];
+    const flags = caseSensitive ? "g" : "gi";
+    const regex = new RegExp(pattern, flags);
+    const matches: Array<{ file: string; line: number; content: string }> = [];
 
-      const stats = statSync(targetPath);
-      const filesToSearch: string[] = [];
+    const stats = statSync(absPath);
+    const filesToSearch: string[] = [];
 
-      if (stats.isFile()) {
-        filesToSearch.push(targetPath);
-      } else {
-        const globFilter = includePattern ? includePattern : "**/*";
-        const glob = new Bun.Glob(globFilter);
-        for (const relFile of glob.scanSync({ cwd: targetPath, onlyFiles: true })) {
-          if (relFile.includes("node_modules") || relFile.includes(".git")) {
-            continue;
-          }
-          filesToSearch.push(join(targetPath, relFile));
+    if (stats.isFile()) {
+      filesToSearch.push(absPath);
+    } else {
+      const globFilter = includePattern ? includePattern : "**/*";
+      const glob = new Bun.Glob(globFilter);
+      for (const relFile of glob.scanSync({ cwd: absPath, onlyFiles: true })) {
+        if (relFile.includes("node_modules") || relFile.includes(".git")) {
+          continue;
         }
+        filesToSearch.push(join(absPath, relFile));
       }
-
-      for (const fullPath of filesToSearch) {
-        if (matches.length >= 100) break;
-
-        try {
-          const content = await Bun.file(fullPath).text();
-          const lines = content.split(/\r?\n/);
-          const relPath = relative(process.cwd(), fullPath).replace(/\\/g, "/");
-
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i]!;
-            regex.lastIndex = 0;
-            if (regex.test(line)) {
-              matches.push({
-                file: relPath,
-                line: i + 1,
-                content: line.trimEnd(),
-              });
-              if (matches.length >= 100) break;
-            }
-          }
-        } catch {
-          // Ignore unreadable or binary files
-        }
-      }
-
-      const rel = relative(process.cwd(), targetPath).replace(/\\/g, "/") || ".";
-
-      // 0 matches is a valid search result (success), not an error
-      return createToolResponse({
-        toolStatus: "success",
-        outcome: "success",
-        data: {
-          path: rel,
-          pattern,
-          matches,
-          count: matches.length,
-        },
-      });
-    } catch (err: any) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "tool_invocation_error",
-          message: `Error in grep '${pattern}': ${err.message || String(err)}`,
-        },
-      });
     }
+
+    for (const fullPath of filesToSearch) {
+      if (matches.length >= 100) break;
+
+      try {
+        const content = await Bun.file(fullPath).text();
+        const lines = content.split(/\r?\n/);
+        const matchRel = relative(process.cwd(), fullPath).replace(/\\/g, "/");
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i]!;
+          regex.lastIndex = 0;
+          if (regex.test(line)) {
+            matches.push({
+              file: matchRel,
+              line: i + 1,
+              content: line.trimEnd(),
+            });
+            if (matches.length >= 100) break;
+          }
+        }
+      } catch {
+        // Ignore unreadable or binary files
+      }
+    }
+
+    // 0 matches is a valid search result (success), not an error
+    return {
+      toolStatus: "success",
+      outcome: "success",
+      data: {
+        path: relPath,
+        pattern,
+        matches,
+        count: matches.length,
+      },
+    };
   },
-};
+});
 
 /**
  * Read tool: Read file content with line numbers and optional line slicing.
  */
-export const readTool: Tool = {
+export const readTool = createTool({
   name: "read",
   description: "Read content of a file with line numbers, optionally specifying start and end lines.",
   parameters: {
-    type: "object",
     properties: {
       path: {
         type: "string",
@@ -829,128 +929,74 @@ export const readTool: Tool = {
     },
     required: ["path"],
   },
-  execute: async (args: Record<string, any>): Promise<string> => {
-    const rawPath = String(args.path || "").trim();
-    if (!rawPath) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "validation_error",
-          message: "'path' parameter is required for the read tool.",
-        },
-      });
-    }
+  execute: async (args: { path: string; startLine?: number; endLine?: number }) => {
+    const target = validateFileTarget(args.path, { toolName: "read" });
+    if (!target.ok) return target.response;
 
-    const filePath = resolve(rawPath);
-    const relPath = relative(process.cwd(), filePath).replace(/\\/g, "/") || rawPath;
+    const content = await Bun.file(target.absPath).text();
+    const lines = content.split(/\r?\n/);
 
-    if (!existsSync(filePath)) {
-      return createToolResponse({
-        toolStatus: "success",
-        outcome: "not_found",
-        data: {
-          path: relPath,
-        },
-        error: {
-          type: "filesystem_error",
-          message: `File '${relPath}' does not exist.`,
-        },
-      });
-    }
-
-    try {
-      const stats = statSync(filePath);
-      if (stats.isDirectory()) {
-        return createToolResponse({
-          toolStatus: "success",
-          outcome: "invalid_target",
-          data: {
-            path: relPath,
-            targetType: "directory",
-          },
-          error: {
-            type: "filesystem_error",
-            message: `'${relPath}' is a directory, not a file. The 'read' tool can only read files.`,
-          },
-        });
-      }
-
-      const content = await Bun.file(filePath).text();
-      const lines = content.split(/\r?\n/);
-
-      if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) {
-        return createToolResponse({
-          toolStatus: "success",
-          outcome: "success",
-          data: {
-            path: relPath,
-            content: "[File is empty (0 lines)]",
-            startLine: 1,
-            endLine: 0,
-            totalLines: 0,
-          },
-        });
-      }
-
-      const start = args.startLine ? Math.max(1, Math.floor(Number(args.startLine))) : 1;
-      const end = args.endLine ? Math.min(lines.length, Math.floor(Number(args.endLine))) : lines.length;
-
-      if (start > lines.length) {
-        return createToolResponse({
-          toolStatus: "success",
-          outcome: "mismatch",
-          data: {
-            path: relPath,
-            totalLines: lines.length,
-            requestedStartLine: start,
-          },
-          error: {
-            type: "validation_error",
-            message: `startLine ${start} exceeds total lines (${lines.length}) in '${relPath}'.`,
-          },
-        });
-      }
-
-      const formattedLines: string[] = [];
-      for (let i = start; i <= end; i++) {
-        const lineNum = String(i).padStart(4, " ");
-        formattedLines.push(`${lineNum} | ${lines[i - 1]}`);
-      }
-
-      return createToolResponse({
+    if (lines.length === 0 || (lines.length === 1 && lines[0] === "")) {
+      return {
         toolStatus: "success",
         outcome: "success",
         data: {
-          path: relPath,
-          content: formattedLines.join("\n"),
-          startLine: start,
-          endLine: end,
-          totalLines: lines.length,
+          path: target.relPath,
+          content: "[File is empty (0 lines)]",
+          startLine: 1,
+          endLine: 0,
+          totalLines: 0,
         },
-      });
-    } catch (err: any) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "filesystem_error",
-          message: `Error reading file '${relPath}': ${err.message || String(err)}`,
-        },
-      });
+      };
     }
+
+    const start = args.startLine ? Math.max(1, Math.floor(Number(args.startLine))) : 1;
+    const end = args.endLine ? Math.min(lines.length, Math.floor(Number(args.endLine))) : lines.length;
+
+    if (start > lines.length) {
+      return {
+        toolStatus: "success",
+        outcome: "mismatch",
+        data: {
+          path: target.relPath,
+          totalLines: lines.length,
+          requestedStartLine: start,
+        },
+        error: {
+          type: "validation_error",
+          message: `startLine ${start} exceeds total lines (${lines.length}) in '${target.relPath}'.`,
+        },
+      };
+    }
+
+    const formattedLines: string[] = [];
+    for (let i = start; i <= end; i++) {
+      const lineNum = String(i).padStart(4, " ");
+      formattedLines.push(`${lineNum} | ${lines[i - 1]}`);
+    }
+
+    return {
+      toolStatus: "success",
+      outcome: "success",
+      data: {
+        path: target.relPath,
+        content: formattedLines.join("\n"),
+        startLine: start,
+        endLine: end,
+        totalLines: lines.length,
+      },
+    };
   },
-};
+});
 
 /**
  * Write tool: Create or overwrite a file.
  */
-export const writeTool: Tool = {
+export const writeTool = createTool({
   name: "write",
   description:
     "Create or completely overwrite a file with specified content. Creates directories automatically.",
   parameters: {
-    type: "object",
     properties: {
       path: {
         type: "string",
@@ -963,79 +1009,54 @@ export const writeTool: Tool = {
     },
     required: ["path", "content"],
   },
-  execute: async (args: Record<string, any>): Promise<string> => {
-    const rawPath = String(args.path || "").trim();
-    if (!rawPath) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "validation_error",
-          message: "'path' parameter is required for the write tool.",
-        },
-      });
-    }
-
-    const filePath = resolve(rawPath);
-    const relPath = relative(process.cwd(), filePath).replace(/\\/g, "/") || rawPath;
+  execute: async (args: { path: string; content: string }) => {
+    const { absPath, relPath } = resolveToolPath(args.path);
     const content = String(args.content ?? "");
 
-    try {
-      if (existsSync(filePath)) {
-        const stats = statSync(filePath);
-        if (stats.isDirectory()) {
-          return createToolResponse({
-            toolStatus: "success",
-            outcome: "invalid_target",
-            data: {
-              path: relPath,
-              targetType: "directory",
-            },
-            error: {
-              type: "filesystem_error",
-              message: `Cannot write to '${relPath}' because it is an existing directory.`,
-            },
-          });
-        }
+    if (existsSync(absPath)) {
+      const stats = statSync(absPath);
+      if (stats.isDirectory()) {
+        return {
+          toolStatus: "success",
+          outcome: "invalid_target",
+          data: {
+            path: relPath,
+            targetType: "directory",
+          },
+          error: {
+            type: "filesystem_error",
+            message: `Cannot write to '${relPath}' because it is an existing directory.`,
+          },
+        };
       }
-
-      const dir = dirname(filePath);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-
-      const bytes = await Bun.write(filePath, content);
-      return createToolResponse({
-        toolStatus: "success",
-        outcome: "success",
-        data: {
-          path: relPath,
-          bytesWritten: bytes,
-        },
-      });
-    } catch (err: any) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "filesystem_error",
-          message: `Error writing file '${relPath}': ${err.message || String(err)}`,
-        },
-      });
     }
+
+    const dir = dirname(absPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+
+    const bytes = await Bun.write(absPath, content);
+    return {
+      toolStatus: "success",
+      outcome: "success",
+      data: {
+        path: relPath,
+        bytesWritten: bytes,
+      },
+    };
   },
-};
+});
 
 /**
  * Edit tool: Perform targeted substring replacements in an existing file.
  * Supports single or multi-section editing within a single file.
  */
-export const editTool: Tool = {
+export const editTool = createTool({
   name: "edit",
   description:
     "Perform one or more targeted replacements within a single file. Supports multiple edits across different sections of the file at once. Each edit's oldString is matched against the original file independently (not incrementally). Do not include overlapping or nested edits; if two edits overlap, merge them together into one edit. Do not include large unchanged regions just to connect distant changes—use multiple separate edit blocks in 'edits' instead.",
   parameters: {
-    type: "object",
     properties: {
       path: {
         type: "string",
@@ -1071,19 +1092,7 @@ export const editTool: Tool = {
     },
     required: ["path"],
   },
-  execute: async (args: Record<string, any>): Promise<string> => {
-    const rawPath = String(args.path || "").trim();
-    if (!rawPath) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "validation_error",
-          message: "'path' parameter is required for the edit tool.",
-        },
-      });
-    }
-
+  execute: async (args: Record<string, any>) => {
     // Normalize edits list from edits or oldString/newString
     let editList: Array<{ oldString: string; newString: string }> = [];
     if (Array.isArray(args.edits) && args.edits.length > 0) {
@@ -1101,188 +1110,146 @@ export const editTool: Tool = {
     }
 
     if (editList.length === 0) {
-      return createToolResponse({
+      return {
         toolStatus: "tool_error",
         outcome: "tool_error",
         error: {
           type: "validation_error",
           message: "At least one edit ('edits' array or 'oldString'/'newString') must be provided for the edit tool.",
         },
-      });
+      };
     }
 
     for (let i = 0; i < editList.length; i++) {
       if (!editList[i]!.oldString) {
-        return createToolResponse({
+        return {
           toolStatus: "tool_error",
           outcome: "tool_error",
           error: {
             type: "validation_error",
             message: `Edit #${i + 1} 'oldString' cannot be empty.`,
           },
-        });
+        };
       }
     }
 
-    const filePath = resolve(rawPath);
-    const relPath = relative(process.cwd(), filePath).replace(/\\/g, "/") || rawPath;
+    const target = validateFileTarget(args.path, { toolName: "edit" });
+    if (!target.ok) return target.response;
 
-    if (!existsSync(filePath)) {
-      return createToolResponse({
-        toolStatus: "success",
-        outcome: "not_found",
-        data: {
-          path: relPath,
-        },
-        error: {
-          type: "filesystem_error",
-          message: `File '${relPath}' does not exist.`,
-        },
-      });
-    }
+    const content = await Bun.file(target.absPath).text();
+    const matchedEdits: Array<{
+      index: number;
+      oldString: string;
+      newString: string;
+      startIndex: number;
+      endIndex: number;
+    }> = [];
 
-    try {
-      const stats = statSync(filePath);
-      if (stats.isDirectory()) {
-        return createToolResponse({
+    // Step 1: Match every edit against the original file content
+    for (let i = 0; i < editList.length; i++) {
+      const { oldString, newString } = editList[i]!;
+
+      if (!content.includes(oldString)) {
+        return {
           toolStatus: "success",
-          outcome: "invalid_target",
+          outcome: "mismatch",
           data: {
-            path: relPath,
-            targetType: "directory",
+            path: target.relPath,
+            editIndex: i,
+            failedOldString: oldString,
+            occurrences: 0,
           },
           error: {
             type: "filesystem_error",
-            message: `'${relPath}' is a directory, not a file. The 'edit' tool can only edit files.`,
+            message: `Edit #${i + 1} oldString was not found in '${target.relPath}'.`,
           },
-        });
+        };
       }
 
-      const content = await Bun.file(filePath).text();
-      const matchedEdits: Array<{
-        index: number;
-        oldString: string;
-        newString: string;
-        startIndex: number;
-        endIndex: number;
-      }> = [];
-
-      // Step 1: Match every edit against the original file content
-      for (let i = 0; i < editList.length; i++) {
-        const { oldString, newString } = editList[i]!;
-
-        if (!content.includes(oldString)) {
-          return createToolResponse({
-            toolStatus: "success",
-            outcome: "mismatch",
-            data: {
-              path: relPath,
-              editIndex: i,
-              failedOldString: oldString,
-              occurrences: 0,
-            },
-            error: {
-              type: "filesystem_error",
-              message: `Edit #${i + 1} oldString was not found in '${relPath}'.`,
-            },
-          });
-        }
-
-        const occurrences = content.split(oldString).length - 1;
-        if (occurrences > 1) {
-          return createToolResponse({
-            toolStatus: "success",
-            outcome: "mismatch",
-            data: {
-              path: relPath,
-              editIndex: i,
-              failedOldString: oldString,
-              occurrences,
-            },
-            error: {
-              type: "filesystem_error",
-              message: `Edit #${i + 1} oldString matched ${occurrences} occurrences in '${relPath}'. Provide more surrounding lines to make it unique.`,
-            },
-          });
-        }
-
-        const startIndex = content.indexOf(oldString);
-        matchedEdits.push({
-          index: i,
-          oldString,
-          newString,
-          startIndex,
-          endIndex: startIndex + oldString.length,
-        });
+      const occurrences = content.split(oldString).length - 1;
+      if (occurrences > 1) {
+        return {
+          toolStatus: "success",
+          outcome: "mismatch",
+          data: {
+            path: target.relPath,
+            editIndex: i,
+            failedOldString: oldString,
+            occurrences,
+          },
+          error: {
+            type: "filesystem_error",
+            message: `Edit #${i + 1} oldString matched ${occurrences} occurrences in '${target.relPath}'. Provide more surrounding lines to make it unique.`,
+          },
+        };
       }
 
-      // Step 2: Check for overlapping or nested edits
-      const sortedEdits = [...matchedEdits].sort((a, b) => a.startIndex - b.startIndex);
-      for (let j = 1; j < sortedEdits.length; j++) {
-        const prev = sortedEdits[j - 1]!;
-        const curr = sortedEdits[j]!;
-        if (curr.startIndex < prev.endIndex) {
-          return createToolResponse({
-            toolStatus: "success",
-            outcome: "mismatch",
-            data: {
-              path: relPath,
-              overlappingEdits: [
-                { editIndex: prev.index, oldString: prev.oldString, range: [prev.startIndex, prev.endIndex] },
-                { editIndex: curr.index, oldString: curr.oldString, range: [curr.startIndex, curr.endIndex] },
-              ],
-            },
-            error: {
-              type: "validation_error",
-              message: `Edits #${prev.index + 1} and #${curr.index + 1} overlap or are nested in '${relPath}'. Overlapping edits must be merged together into a single edit block.`,
-            },
-          });
-        }
-      }
-
-      // Step 3: Apply replacements simultaneously from the original content
-      let updatedContent = "";
-      let lastIndex = 0;
-      for (const edit of sortedEdits) {
-        updatedContent += content.slice(lastIndex, edit.startIndex);
-        updatedContent += edit.newString;
-        lastIndex = edit.endIndex;
-      }
-      updatedContent += content.slice(lastIndex);
-
-      await Bun.write(filePath, updatedContent);
-
-      return createToolResponse({
-        toolStatus: "success",
-        outcome: "success",
-        data: {
-          path: relPath,
-          editsApplied: editList.length,
-          message: `Successfully applied ${editList.length} edit${editList.length > 1 ? "s" : ""} to '${relPath}'.`,
-        },
-      });
-    } catch (err: any) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "filesystem_error",
-          message: `Error editing file '${relPath}': ${err.message || String(err)}`,
-        },
+      const startIndex = content.indexOf(oldString);
+      matchedEdits.push({
+        index: i,
+        oldString,
+        newString,
+        startIndex,
+        endIndex: startIndex + oldString.length,
       });
     }
+
+    // Step 2: Check for overlapping or nested edits
+    const sortedEdits = [...matchedEdits].sort((a, b) => a.startIndex - b.startIndex);
+    for (let j = 1; j < sortedEdits.length; j++) {
+      const prev = sortedEdits[j - 1]!;
+      const curr = sortedEdits[j]!;
+      if (curr.startIndex < prev.endIndex) {
+        return {
+          toolStatus: "success",
+          outcome: "mismatch",
+          data: {
+            path: target.relPath,
+            overlappingEdits: [
+              { editIndex: prev.index, oldString: prev.oldString, range: [prev.startIndex, prev.endIndex] },
+              { editIndex: curr.index, oldString: curr.oldString, range: [curr.startIndex, curr.endIndex] },
+            ],
+          },
+          error: {
+            type: "validation_error",
+            message: `Edits #${prev.index + 1} and #${curr.index + 1} overlap or are nested in '${target.relPath}'. Overlapping edits must be merged together into a single edit block.`,
+          },
+        };
+      }
+    }
+
+    // Step 3: Apply replacements simultaneously from the original content
+    let updatedContent = "";
+    let lastIndex = 0;
+    for (const edit of sortedEdits) {
+      updatedContent += content.slice(lastIndex, edit.startIndex);
+      updatedContent += edit.newString;
+      lastIndex = edit.endIndex;
+    }
+    updatedContent += content.slice(lastIndex);
+
+    await Bun.write(target.absPath, updatedContent);
+
+    return {
+      toolStatus: "success",
+      outcome: "success",
+      data: {
+        path: target.relPath,
+        editsApplied: editList.length,
+        message: `Successfully applied ${editList.length} edit${editList.length > 1 ? "s" : ""} to '${target.relPath}'.`,
+      },
+    };
   },
-};
+});
 
 /**
  * Delete tool: Delete a file or directory on the filesystem.
  */
-export const deleteTool: Tool = {
+export const deleteTool = createTool({
   name: "delete",
   description:
     "Delete a file or directory on the filesystem. Supports deleting single files or directories recursively.",
   parameters: {
-    type: "object",
     properties: {
       path: {
         type: "string",
@@ -1295,37 +1262,24 @@ export const deleteTool: Tool = {
     },
     required: ["path"],
   },
-  execute: async (args: Record<string, any>): Promise<string> => {
-    const rawPath = String(args.path || "").trim();
-    if (!rawPath) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "validation_error",
-          message: "'path' parameter is required for the delete tool.",
-        },
-      });
-    }
-
-    const targetPath = resolve(rawPath);
+  execute: async (args: { path: string; recursive?: boolean }) => {
+    const { absPath: targetPath, relPath } = resolveToolPath(args.path);
     const workspaceRoot = process.cwd();
-    const relPath = relative(workspaceRoot, targetPath).replace(/\\/g, "/") || rawPath;
 
     // Safety checks: Prevent deleting root filesystem or the workspace root directory itself
     if (targetPath === resolve("/") || targetPath === workspaceRoot || relPath === "." || relPath === "") {
-      return createToolResponse({
+      return {
         toolStatus: "tool_error",
         outcome: "tool_error",
         error: {
           type: "validation_error",
           message: "Deleting the workspace root directory or system root is prohibited.",
         },
-      });
+      };
     }
 
     if (!existsSync(targetPath)) {
-      return createToolResponse({
+      return {
         toolStatus: "success",
         outcome: "not_found",
         data: {
@@ -1335,64 +1289,53 @@ export const deleteTool: Tool = {
           type: "filesystem_error",
           message: `Path '${relPath}' does not exist.`,
         },
-      });
+      };
     }
 
-    try {
-      const stats = statSync(targetPath);
-      const isDir = stats.isDirectory();
-      const recursive = Boolean(args.recursive);
+    const stats = statSync(targetPath);
+    const isDir = stats.isDirectory();
+    const recursive = Boolean(args.recursive);
 
-      if (isDir) {
-        if (!recursive) {
-          return createToolResponse({
-            toolStatus: "success",
-            outcome: "invalid_target",
-            data: {
-              path: relPath,
-              targetType: "directory",
-            },
-            error: {
-              type: "validation_error",
-              message: `'${relPath}' is a directory. Set 'recursive: true' to delete a directory.`,
-            },
-          });
-        }
-        rmSync(targetPath, { recursive: true, force: true });
-        return createToolResponse({
+    if (isDir) {
+      if (!recursive) {
+        return {
           toolStatus: "success",
-          outcome: "success",
+          outcome: "invalid_target",
           data: {
             path: relPath,
             targetType: "directory",
-            message: `Successfully deleted directory '${relPath}'.`,
           },
-        });
+          error: {
+            type: "validation_error",
+            message: `'${relPath}' is a directory. Set 'recursive: true' to delete a directory.`,
+          },
+        };
       }
-
-      // Single file deletion
-      rmSync(targetPath, { force: true });
-      return createToolResponse({
+      rmSync(targetPath, { recursive: true, force: true });
+      return {
         toolStatus: "success",
         outcome: "success",
         data: {
           path: relPath,
-          targetType: "file",
-          message: `Successfully deleted file '${relPath}'.`,
+          targetType: "directory",
+          message: `Successfully deleted directory '${relPath}'.`,
         },
-      });
-    } catch (err: any) {
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "filesystem_error",
-          message: `Error deleting '${relPath}': ${err.message || String(err)}`,
-        },
-      });
+      };
     }
+
+    // Single file deletion
+    rmSync(targetPath, { force: true });
+    return {
+      toolStatus: "success",
+      outcome: "success",
+      data: {
+        path: relPath,
+        targetType: "file",
+        message: `Successfully deleted file '${relPath}'.`,
+      },
+    };
   },
-};
+});
 
 /**
  * Default coding & skill tools collection.
