@@ -257,6 +257,61 @@ describe("Agent Effect Stream & Event Processing", () => {
     // Interruption finishes cleanly without hanging
     await Effect.runPromise(program);
   });
+
+  it("streams events incrementally in real time during multi-turn execution", async () => {
+    const timestamps: Array<{ type: string; elapsedMs: number }> = [];
+    const mockClient = new TestLLMClient();
+
+    // Turn 1: returns tool call
+    mockClient.enqueue({
+      content: null,
+      tool_calls: [
+        {
+          id: "call_slow",
+          type: "function",
+          function: { name: "slow_tool", arguments: "{}" },
+        },
+      ],
+    });
+
+    // Turn 2: returns response
+    mockClient.enqueue({
+      content: "All done!",
+    });
+
+    // A tool that simulates a 60ms delay
+    const slowTool = {
+      name: "slow_tool",
+      description: "A slow test tool",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        await new Promise((r) => setTimeout(r, 60));
+        return JSON.stringify({ outcome: "success" });
+      },
+    };
+
+    const stream = runAgent("run slow tool", [], dummyConfig);
+    const layer = createAgentLayer({ client: mockClient, tools: [slowTool as any] });
+
+    const start = Date.now();
+    await Effect.runPromise(
+      stream.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            timestamps.push({ type: event.type, elapsedMs: Date.now() - start });
+          })
+        ),
+        Effect.provide(layer)
+      )
+    );
+
+    const toolStart = timestamps.find((t) => t.type === "tool:start");
+    const toolComplete = timestamps.find((t) => t.type === "tool:complete");
+    expect(toolStart).toBeDefined();
+    expect(toolComplete).toBeDefined();
+    // tool:complete must arrive at least 40ms after tool:start, proving events stream live
+    expect(toolComplete!.elapsedMs - toolStart!.elapsedMs).toBeGreaterThanOrEqual(40);
+  });
 });
 
 describe("History Normalization (buildWorkingHistory)", () => {

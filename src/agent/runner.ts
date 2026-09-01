@@ -41,7 +41,8 @@ export function runAgent(
   options?: RunAgentOptions
 ): Stream.Stream<AgentEvent, AgentError, LLMService | ToolService> {
   return Stream.asyncPush<AgentEvent, AgentError, LLMService | ToolService>((emit) =>
-    Effect.gen(function* () {
+    Effect.forkScoped(
+      Effect.gen(function* () {
       const llm = yield* LLMService;
       const toolService = yield* ToolService;
       const maxSteps = options?.maxSteps ?? DEFAULT_MAX_STEPS;
@@ -206,5 +207,6 @@ export function runAgent(
       });
       emit.fail(limitError);
     })
+    )
   );
 }
