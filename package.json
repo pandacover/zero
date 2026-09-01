@@ -6,11 +6,11 @@
   "module": "src/index.ts",
   "type": "module",
   "bin": {
-    "zero": "./src/cli.ts"
+    "zero": "./src/cli.tsx"
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "cli": "bun run src/cli.ts",
+    "cli": "bun run src/cli.tsx",
     "test": "bun test"
   },
   "devDependencies": {
@@ -18,6 +18,10 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "effect": "^3.22.1"
+    "@opentui/core": "^0.5.10",
+    "@opentui/react": "^0.5.10",
+    "@types/react": "19.2.0",
+    "effect": "^3.22.1",
+    "react": "19.2.0"
   }
 }

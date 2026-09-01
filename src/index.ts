@@ -9,7 +9,7 @@ export * from "./config.ts";
 export * from "./client.ts";
 export * from "./session.ts";
 export * from "./agent.ts";
-export * from "./ui/spinner.ts";
+export * from "./cli.tsx";
 
 import { Effect, Stream } from "effect";
 import { createAgentLayer, runAgent } from "./agent.ts";
