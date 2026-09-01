@@ -217,190 +217,123 @@ export const skillDiscoveryTool = createTool({
       },
     },
   },
-  execute: async (args: Record<string, any>): Promise<string> => {
+  execute: async (args: Record<string, any>) => {
     const candidateDirs = [
-      resolve("skills"), // Current workspace skills
-      resolve(import.meta.dir, "../skills"), // Built-in repository skills
-      join(homedir(), ".zero/skills"), // Global user skills
+      resolve("skills"),
+      resolve(import.meta.dir, "../skills"),
+      join(homedir(), ".zero/skills"),
     ];
 
     // Normalize requested skills from skillNames or skillName
     let requestedSkills: string[] = [];
     if (Array.isArray(args.skillNames)) {
-      requestedSkills = args.skillNames
-        .map((s) => String(s).trim().toLowerCase())
-        .filter(Boolean);
+      requestedSkills = args.skillNames.map((s) => String(s).trim().toLowerCase()).filter(Boolean);
     } else if (typeof args.skillNames === "string" && args.skillNames.trim()) {
-      requestedSkills = args.skillNames
-        .split(",")
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean);
+      requestedSkills = args.skillNames.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
     } else if (args.skillName && typeof args.skillName === "string" && args.skillName.trim()) {
-      requestedSkills = args.skillName
-        .split(",")
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean);
+      requestedSkills = args.skillName.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
     }
 
     const isMultiFetch = Array.isArray(args.skillNames) || requestedSkills.length > 1;
 
-    // Fast-path: When specific skill(s) are requested
-    if (requestedSkills.length > 0) {
-      const requestedSkillSet = new Set(requestedSkills);
-      const skillDocs: Record<string, string> = {};
+    // Scan all available skill folders once
+    const availableSkills: Array<{ folder: string; key: string; fullPath: string }> = [];
+    const seen = new Set<string>();
 
-      for (const skillsDir of candidateDirs) {
-        if (!existsSync(skillsDir)) continue;
-
-        try {
-          const glob = new Bun.Glob("*/SKILL.md");
-          for (const relFile of glob.scanSync({ cwd: skillsDir })) {
-            const fullPath = join(skillsDir, relFile);
-            const skillFolder = dirname(relFile);
-            const skillKey = skillFolder.toLowerCase();
-
-            if (requestedSkillSet.has(skillKey) && !skillDocs[skillKey]) {
-              try {
-                skillDocs[skillKey] = await Bun.file(fullPath).text();
-              } catch {
-                // Ignore
-              }
-            }
+    for (const dir of candidateDirs) {
+      if (!existsSync(dir)) continue;
+      try {
+        const glob = new Bun.Glob("*/SKILL.md");
+        for (const rel of glob.scanSync({ cwd: dir })) {
+          const folder = dirname(rel);
+          const key = folder.toLowerCase();
+          if (!seen.has(key)) {
+            seen.add(key);
+            availableSkills.push({ folder, key, fullPath: join(dir, rel) });
           }
-        } catch {
-          // Ignore
+        }
+      } catch {}
+    }
+
+    // Specific skill(s) requested
+    if (requestedSkills.length > 0) {
+      const skillDocs: Record<string, string> = {};
+      for (const skill of availableSkills) {
+        if (requestedSkills.includes(skill.key)) {
+          try {
+            skillDocs[skill.key] = await Bun.file(skill.fullPath).text();
+          } catch {}
         }
       }
 
-      // If single skill requested and not in multi-fetch mode
       if (!isMultiFetch && requestedSkills.length === 1) {
         const target = requestedSkills[0]!;
         if (skillDocs[target]) {
-          return createToolResponse({
-            outcome: "success",
-            data: {
-              skillName: target,
-              documentation: skillDocs[target],
-            },
-          });
-        }
-        return createToolResponse({
-          outcome: "not_found",
-          data: { requestedSkill: target },
-          error: {
-            type: "validation_error",
-            message: `Skill '${target}' was not found.`,
-          },
-        });
-      }
-
-      // Multi-fetch response format
-      const skillsResults = requestedSkills.map((name) => {
-        if (skillDocs[name]) {
-          return {
-            skillName: name,
-            found: true,
-            documentation: skillDocs[name],
-          };
+          return { outcome: "success", data: { skillName: target, documentation: skillDocs[target] } };
         }
         return {
-          skillName: name,
-          found: false,
+          outcome: "not_found",
+          data: { requestedSkill: target },
+          error: { type: "validation_error", message: `Skill '${target}' was not found.` },
         };
-      });
+      }
+
+      const skillsResults = requestedSkills.map((name) => ({
+        skillName: name,
+        found: Boolean(skillDocs[name]),
+        ...(skillDocs[name] ? { documentation: skillDocs[name] } : {}),
+      }));
 
       const foundCount = skillsResults.filter((r) => r.found).length;
       const missing = skillsResults.filter((r) => !r.found).map((r) => r.skillName);
 
       if (foundCount === 0) {
-        return createToolResponse({
+        return {
           outcome: "not_found",
-          data: {
-            requestedSkills,
-            skills: skillsResults,
-          },
+          data: { requestedSkills, skills: skillsResults },
           error: {
             type: "validation_error",
             message: `None of the requested skills (${requestedSkills.join(", ")}) were found.`,
           },
-        });
+        };
       }
 
-      return createToolResponse({
+      return {
         outcome: "success",
-        data: {
-          requestedSkills,
-          foundCount,
-          missing,
-          skills: skillsResults,
-        },
-      });
+        data: { requestedSkills, foundCount, missing, skills: skillsResults },
+      };
     }
 
-    // Default: Return catalog of all tools & skills
-    const seenSkills = new Set<string>();
+    // Catalog mode
     const toolsCatalog: Array<{ name: string; description: string; frontMatter: string }> = [];
     const skillsCatalog: Array<{ name: string; type: string; description: string; frontMatter: string }> = [];
 
-    for (const skillsDir of candidateDirs) {
-      if (!existsSync(skillsDir)) continue;
-
+    for (const skill of availableSkills) {
       try {
-        const glob = new Bun.Glob("*/SKILL.md");
-        for (const relFile of glob.scanSync({ cwd: skillsDir })) {
-          const fullPath = join(skillsDir, relFile);
-          const skillFolder = dirname(relFile);
-          const skillKey = skillFolder.toLowerCase();
+        const content = await Bun.file(skill.fullPath).text();
+        const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+        if (match && match[1]) {
+          const frontMatter = match[1].trim();
+          const isTool = frontMatter.includes("type: tool") || frontMatter.includes("parameters:");
+          const descMatch = frontMatter.match(/description:\s*(.+)/);
+          const description = descMatch && descMatch[1] ? descMatch[1].trim() : "";
 
-          if (seenSkills.has(skillKey)) continue;
-
-          try {
-            const content = await Bun.file(fullPath).text();
-            const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-            if (match && match[1]) {
-              seenSkills.add(skillKey);
-              const frontMatter = match[1].trim();
-              const isTool = frontMatter.includes("type: tool") || frontMatter.includes("parameters:");
-              const descMatch = frontMatter.match(/description:\s*(.+)/);
-              const description = descMatch && descMatch[1] ? descMatch[1].trim() : "";
-
-              if (isTool) {
-                toolsCatalog.push({
-                  name: skillFolder,
-                  description,
-                  frontMatter,
-                });
-              } else {
-                const typeMatch = frontMatter.match(/type:\s*([a-zA-Z0-9_-]+)/);
-                const skillType = typeMatch && typeMatch[1] ? typeMatch[1].trim() : "process_skill";
-                skillsCatalog.push({
-                  name: skillFolder,
-                  type: skillType,
-                  description,
-                  frontMatter,
-                });
-              }
-            }
-          } catch {
-            // Ignore unreadable skill files
+          if (isTool) {
+            toolsCatalog.push({ name: skill.folder, description, frontMatter });
+          } else {
+            const typeMatch = frontMatter.match(/type:\s*([a-zA-Z0-9_-]+)/);
+            const skillType = typeMatch && typeMatch[1] ? typeMatch[1].trim() : "process_skill";
+            skillsCatalog.push({ name: skill.folder, type: skillType, description, frontMatter });
           }
         }
-      } catch {
-        // Ignore directory read errors
-      }
+      } catch {}
     }
 
-    return createToolResponse({
+    return {
       outcome: "success",
-      data: {
-        tools: toolsCatalog,
-        skills: skillsCatalog,
-      },
-      metadata: {
-        totalTools: toolsCatalog.length,
-        totalSkills: skillsCatalog.length,
-      },
-    });
+      data: { tools: toolsCatalog, skills: skillsCatalog },
+      metadata: { totalTools: toolsCatalog.length, totalSkills: skillsCatalog.length },
+    };
   },
 });
 
@@ -504,6 +437,56 @@ export function isDisallowedBashFileWrite(command: string): { isDisallowed: bool
   return { isDisallowed: false };
 }
 
+interface ExecutionResult {
+  timedOut: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+function formatExecutionResponse(
+  rawCommand: string,
+  res: ExecutionResult,
+  durationMs: number,
+  timeout: number
+) {
+  const execution: ToolExecutionDetails = {
+    command: rawCommand,
+    exitCode: res.exitCode,
+    stdout: res.stdout.trimEnd(),
+    stderr: res.stderr.trimEnd(),
+    durationMs,
+    timedOut: res.timedOut,
+  };
+
+  if (res.timedOut) {
+    execution.stderr = `Command '${rawCommand}' timed out after ${timeout}ms.`;
+    return {
+      toolStatus: "success" as const,
+      outcome: "timeout" as const,
+      execution,
+      error: {
+        type: "command_execution_error" as const,
+        message: `Command '${rawCommand}' timed out after ${timeout}ms.`,
+      },
+    };
+  }
+
+  if (res.exitCode !== 0) {
+    return {
+      toolStatus: "success" as const,
+      outcome: "failure" as const,
+      execution,
+      error: {
+        type: "command_execution_error" as const,
+        message: `Command '${rawCommand}' exited with code ${res.exitCode}.`,
+      },
+    };
+  }
+
+  return { toolStatus: "success" as const, outcome: "success" as const, execution };
+}
+
 /**
  * Bash tool: Execute shell commands sandboxed to the project workspace directory.
  * Fully OS-agnostic: executes with full POSIX Bash semantics across Windows, macOS, and Linux.
@@ -525,197 +508,80 @@ export const bashTool = createTool({
     },
     required: ["command"],
   },
-  execute: async (args: Record<string, any>): Promise<string> => {
+  execute: async (args: { command: string; timeoutMs?: number }) => {
     const rawCommand = String(args.command || "").trim();
     const check = isDisallowedBashFileWrite(rawCommand);
     if (check.isDisallowed) {
-      return createToolResponse({
+      return {
         toolStatus: "tool_error",
         outcome: "tool_error",
         error: {
           type: "tool_invocation_error",
-          message: check.reason || "File creation and editing via the bash tool is prohibited. Use the 'write' tool to create files and the 'edit' tool to modify files.",
+          message:
+            check.reason ||
+            "File creation and editing via the bash tool is prohibited. Use the 'write' tool to create files and the 'edit' tool to modify files.",
         },
-      });
+      };
     }
 
     const timeout = typeof args.timeoutMs === "number" && args.timeoutMs > 0 ? args.timeoutMs : 30000;
     const workspaceRoot = process.cwd();
     const startTime = Date.now();
+    const bashExe = resolveBashExecutable();
 
-    try {
-      const bashExe = resolveBashExecutable();
+    let timer: any;
+    const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
+      timer = setTimeout(() => resolve({ timedOut: true }), timeout);
+    });
 
-      if (bashExe) {
-        // Execute via native POSIX Bash binary
-        const proc = Bun.spawn([bashExe, "-c", rawCommand], {
-          cwd: workspaceRoot,
-          env: { ...process.env },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+    let execResult: ExecutionResult;
 
-        let timedOut = false;
-        const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
-          setTimeout(() => {
-            timedOut = true;
-            try {
-              proc.kill();
-              if (process.platform === "win32" && proc.pid) {
-                Bun.spawn(["taskkill", "/F", "/T", "/PID", String(proc.pid)], {
-                  stdout: "ignore",
-                  stderr: "ignore",
-                });
-              }
-            } catch {
-              // Ignore
-            }
-            resolve({ timedOut: true });
-          }, timeout);
-        });
+    if (bashExe) {
+      const proc = Bun.spawn([bashExe, "-c", rawCommand], {
+        cwd: workspaceRoot,
+        env: { ...process.env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-        const execPromise = Promise.all([
+      const outcome = await Promise.race([
+        Promise.all([
           new Response(proc.stdout).text(),
           new Response(proc.stderr).text(),
           proc.exited,
-        ]).then(([stdout, stderr, exitCode]) => ({
+        ]).then(([stdout, stderr, exitCode]) => ({ timedOut: false as const, stdout, stderr, exitCode })),
+        timeoutPromise,
+      ]);
+
+      if (outcome.timedOut) {
+        try {
+          proc.kill();
+          if (process.platform === "win32" && proc.pid) {
+            Bun.spawn(["taskkill", "/F", "/T", "/PID", String(proc.pid)], { stdout: "ignore", stderr: "ignore" });
+          }
+        } catch {}
+        execResult = { timedOut: true, exitCode: null, stdout: "", stderr: "" };
+      } else {
+        execResult = outcome;
+      }
+    } else {
+      const outcome = await Promise.race([
+        $`${{ raw: rawCommand }}`.cwd(workspaceRoot).env({ ...process.env }).quiet().nothrow().then((res) => ({
           timedOut: false as const,
-          stdout,
-          stderr,
-          exitCode,
-        }));
+          stdout: res.stdout.toString(),
+          stderr: res.stderr.toString(),
+          exitCode: res.exitCode,
+        })),
+        timeoutPromise,
+      ]);
 
-        const result = await Promise.race([execPromise, timeoutPromise]);
-        const durationMs = Date.now() - startTime;
-
-        if (result.timedOut) {
-          const execution: ToolExecutionDetails = {
-            command: rawCommand,
-            exitCode: null,
-            stdout: "",
-            stderr: `Command '${rawCommand}' timed out after ${timeout}ms.`,
-            durationMs,
-            timedOut: true,
-          };
-          return createToolResponse({
-            toolStatus: "success",
-            outcome: "timeout",
-            execution,
-            error: {
-              type: "command_execution_error",
-              message: `Command '${rawCommand}' timed out after ${timeout}ms.`,
-            },
-          });
-        }
-
-        const exitCode = result.exitCode;
-        const stdoutText = result.stdout.trimEnd();
-        const stderrText = result.stderr.trimEnd();
-
-        const execution: ToolExecutionDetails = {
-          command: rawCommand,
-          exitCode,
-          stdout: stdoutText,
-          stderr: stderrText,
-          durationMs,
-          timedOut: false,
-        };
-
-        if (exitCode !== 0) {
-          return createToolResponse({
-            toolStatus: "success",
-            outcome: "failure",
-            execution,
-            error: {
-              type: "command_execution_error",
-              message: `Command '${rawCommand}' exited with code ${exitCode}.`,
-            },
-          });
-        }
-
-        return createToolResponse({
-          toolStatus: "success",
-          outcome: "success",
-          execution,
-        });
-      }
-
-      // Fallback: Cross-platform POSIX engine via Bun Shell
-      const timeoutPromise = new Promise<{ timedOut: true }>((resolve) =>
-        setTimeout(() => resolve({ timedOut: true }), timeout)
-      );
-
-      const execPromise = $`${{ raw: rawCommand }}`
-        .cwd(workspaceRoot)
-        .env({ ...process.env })
-        .quiet()
-        .nothrow()
-        .then((res) => ({
-          timedOut: false as const,
-          res,
-        }));
-
-      const result = await Promise.race([execPromise, timeoutPromise]);
-      const durationMs = Date.now() - startTime;
-
-      if (result.timedOut) {
-        const execution: ToolExecutionDetails = {
-          command: rawCommand,
-          exitCode: null,
-          stdout: "",
-          stderr: `Command '${rawCommand}' timed out after ${timeout}ms.`,
-          durationMs,
-          timedOut: true,
-        };
-        return createToolResponse({
-          toolStatus: "success",
-          outcome: "timeout",
-          execution,
-          error: {
-            type: "command_execution_error",
-            message: `Command '${rawCommand}' timed out after ${timeout}ms.`,
-          },
-        });
-      }
-
-      const { res } = result;
-      const execution: ToolExecutionDetails = {
-        command: rawCommand,
-        exitCode: res.exitCode,
-        stdout: res.stdout.toString().trimEnd(),
-        stderr: res.stderr.toString().trimEnd(),
-        durationMs,
-        timedOut: false,
-      };
-
-      if (res.exitCode !== 0) {
-        return createToolResponse({
-          toolStatus: "success",
-          outcome: "failure",
-          execution,
-          error: {
-            type: "command_execution_error",
-            message: `Command '${rawCommand}' exited with code ${res.exitCode}.`,
-          },
-        });
-      }
-
-      return createToolResponse({
-        toolStatus: "success",
-        outcome: "success",
-        execution,
-      });
-    } catch (err: any) {
-      const durationMs = Date.now() - startTime;
-      return createToolResponse({
-        toolStatus: "tool_error",
-        outcome: "tool_error",
-        error: {
-          type: "tool_invocation_error",
-          message: `Error executing command '${rawCommand}': ${err.message || String(err)}`,
-        },
-      });
+      execResult = outcome.timedOut
+        ? { timedOut: true, exitCode: null, stdout: "", stderr: "" }
+        : outcome;
     }
+
+    clearTimeout(timer);
+    return formatExecutionResponse(rawCommand, execResult, Date.now() - startTime, timeout);
   },
 });
 
