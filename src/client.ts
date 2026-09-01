@@ -134,7 +134,10 @@ export class OpenAICompatibleClient {
     let reasoningFinished = false;
     let usage: TokenUsage | undefined;
 
-    while (true) {
+    let streamDone = false;
+    let responseStarted = false;
+
+    while (!streamDone) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -146,7 +149,10 @@ export class OpenAICompatibleClient {
         if (!trimmed || trimmed.startsWith(":")) continue;
         if (trimmed.startsWith("data:")) {
           const dataStr = trimmed.slice(5).trim();
-          if (dataStr === "[DONE]") break;
+          if (dataStr === "[DONE]") {
+            streamDone = true;
+            break;
+          }
           try {
             const json = JSON.parse(dataStr);
             if (json.usage) {
@@ -175,6 +181,13 @@ export class OpenAICompatibleClient {
                   const parts = contentDelta.split("</think>");
                   if (parts[0]) reasoning += parts[0];
                   if (parts[1]) content += parts[1];
+
+                  if (!reasoningFinished && reasoning.trim().length > 0) {
+                    reasoningFinished = true;
+                    callbacks.onReasoningComplete?.(reasoning.trim());
+                    responseStarted = true;
+                    callbacks.onResponseStart?.();
+                  }
                 } else {
                   reasoning += contentDelta;
                 }
@@ -205,21 +218,36 @@ export class OpenAICompatibleClient {
             }
 
             // 4. Transition Check: Has reasoning finished and content/tools begun?
-            if (!reasoningFinished && !insideThinkTag && reasoning.trim().length > 0) {
-              const hasStartedContent = content.length > 0;
-              const hasStartedTools = Object.keys(toolCallsByIndex).length > 0;
-              if (hasStartedContent || hasStartedTools) {
+            const hasStartedContent = content.length > 0;
+            const hasStartedTools = Object.keys(toolCallsByIndex).length > 0;
+
+            if (!reasoningFinished && !insideThinkTag) {
+              if (reasoning.trim().length > 0 && (hasStartedContent || hasStartedTools)) {
                 reasoningFinished = true;
                 callbacks.onReasoningComplete?.(reasoning.trim());
-                if (hasStartedContent && !hasStartedTools) {
+                if (hasStartedContent && !hasStartedTools && !responseStarted) {
+                  responseStarted = true;
                   callbacks.onResponseStart?.();
                 }
+              } else if (reasoning.trim().length === 0 && hasStartedContent && !responseStarted) {
+                // Direct response without reasoning
+                responseStarted = true;
+                callbacks.onResponseStart?.();
               }
             }
           } catch {
             // Ignore parse errors on individual stream chunks
           }
         }
+      }
+
+      if (streamDone) {
+        try {
+          await reader.cancel();
+        } catch {
+          // Ignore
+        }
+        break;
       }
     }
 
