@@ -1,7 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { Effect, Fiber, Layer, Stream } from "effect";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { Agent, runAgent } from "../src/agent.ts";
+import {
+  buildWorkingHistory,
+  createAgentLayer,
+  createLiveLLMLayer,
+  createLiveToolLayer,
+  LLMService,
+  ModelInvocationError,
+  runAgent,
+  ToolService,
+} from "../src/agent.ts";
 import { OpenAICompatibleClient } from "../src/client.ts";
 import {
   getGlobalDefaultProvider,
@@ -47,7 +57,29 @@ class TestLLMClient extends OpenAICompatibleClient {
   }
 }
 
-describe("Agent Generator & Event Streaming", () => {
+/**
+ * Helper to collect all stream events using an Effect layer.
+ */
+async function collectAgentEvents(
+  stream: Stream.Stream<AgentEvent, any, LLMService | ToolService>,
+  options: { client?: OpenAICompatibleClient; tools?: Tool[] } = {}
+): Promise<AgentEvent[]> {
+  const events: AgentEvent[] = [];
+  const layer = createAgentLayer(options);
+  const program = stream.pipe(
+    Stream.runForEach((event) =>
+      Effect.sync(() => {
+        events.push(event);
+      })
+    ),
+    Effect.provide(layer as Layer.Layer<LLMService | ToolService>)
+  );
+
+  await Effect.runPromise(program);
+  return events;
+}
+
+describe("Agent Effect Stream & Event Processing", () => {
   const dummyConfig: ProviderConfig = {
     name: "TestProvider",
     baseURL: "http://localhost:11434/v1",
@@ -64,15 +96,11 @@ describe("Agent Generator & Event Streaming", () => {
       usage: { total_tokens: 15 },
     });
 
-    const events: AgentEvent[] = [];
-    const generator = runAgent("Hello!", [], dummyConfig, {
+    const stream = runAgent("Hello!", [], dummyConfig);
+    const events = await collectAgentEvents(stream, {
       client: mockClient,
       tools: defaultTools,
     });
-
-    for await (const event of generator) {
-      events.push(event);
-    }
 
     expect(events.length).toBe(3);
     expect(events[0]?.type).toBe("response:start");
@@ -99,14 +127,10 @@ describe("Agent Generator & Event Streaming", () => {
       supportsReasoning: true,
     };
 
-    const events: AgentEvent[] = [];
-    const generator = runAgent("What is 6 * 7?", [], reasoningConfig, {
+    const stream = runAgent("What is 6 * 7?", [], reasoningConfig);
+    const events = await collectAgentEvents(stream, {
       client: mockClient,
     });
-
-    for await (const event of generator) {
-      events.push(event);
-    }
 
     const eventTypes = events.map((e) => e.type);
     expect(eventTypes).toContain("think:start");
@@ -146,15 +170,11 @@ describe("Agent Generator & Event Streaming", () => {
       content: "Found package.json file.",
     });
 
-    const events: AgentEvent[] = [];
-    const generator = runAgent("Find package.json", [], dummyConfig, {
+    const stream = runAgent("Find package.json", [], dummyConfig);
+    const events = await collectAgentEvents(stream, {
       client: mockClient,
       tools: defaultTools,
     });
-
-    for await (const event of generator) {
-      events.push(event);
-    }
 
     const eventTypes = events.map((e) => e.type);
     expect(eventTypes).toContain("tool:start");
@@ -201,15 +221,11 @@ describe("Agent Generator & Event Streaming", () => {
       reasoning: "Everything looks good.",
     });
 
-    const events: AgentEvent[] = [];
-    const generator = runAgent("Check ts files", [], dummyConfig, {
+    const stream = runAgent("Check ts files", [], dummyConfig);
+    await collectAgentEvents(stream, {
       client: mockClient,
       tools: defaultTools,
     });
-
-    for await (const event of generator) {
-      events.push(event);
-    }
 
     expect(mockClient.receivedPayloads.length).toBe(2);
     const turn2Payload = mockClient.receivedPayloads[1]!;
@@ -218,8 +234,54 @@ describe("Agent Generator & Event Streaming", () => {
     expect(assistantMsg?.thought).toBe("Let me check the files first before making changes.");
   });
 
-  it("exports Agent.run as a backward-compatible alias to runAgent", () => {
-    expect(Agent.run).toBe(runAgent);
+  it("supports Fiber interruption to abort an agent run mid-flight", async () => {
+    const mockClient = new TestLLMClient();
+    // A deferred call that never completes
+    mockClient.callChatCompletion = () => new Promise(() => {});
+
+    const stream = runAgent("Hang query", [], dummyConfig);
+    const layer = createAgentLayer({ client: mockClient });
+
+    const program = Effect.gen(function* () {
+      const fiber = yield* Effect.fork(
+        stream.pipe(
+          Stream.runDrain,
+          Effect.provide(layer)
+        )
+      );
+
+      // Interrupt fiber immediately
+      yield* Fiber.interrupt(fiber);
+    });
+
+    // Interruption finishes cleanly without hanging
+    await Effect.runPromise(program);
+  });
+});
+
+describe("History Normalization (buildWorkingHistory)", () => {
+  it("filters leading duplicate system prompts and prepends configured prompt", () => {
+    const prior: Message[] = [
+      { role: "system", content: "Old system prompt" },
+      { role: "user", content: "Previous question" },
+      { role: "assistant", content: "Previous answer" },
+    ];
+
+    const result = buildWorkingHistory("New question", prior, "New active prompt");
+    expect(result[0]).toEqual({ role: "system", content: "New active prompt" });
+    expect(result[1]).toEqual({ role: "user", content: "Previous question" });
+    expect(result[2]).toEqual({ role: "assistant", content: "Previous answer" });
+    expect(result[3]).toEqual({ role: "user", content: "New question" });
+  });
+
+  it("deduplicates consecutive duplicate user prompts", () => {
+    const prior: Message[] = [
+      { role: "user", content: "Identical query" },
+    ];
+
+    const result = buildWorkingHistory("Identical query", prior);
+    expect(result.length).toBe(1);
+    expect(result[0]?.content).toBe("Identical query");
   });
 });
 
@@ -234,17 +296,12 @@ describe("Session Management & Detachment", () => {
     const mockClient = new TestLLMClient();
     mockClient.enqueue({ content: "First answer" });
 
-    const generator = runAgent("Query 1", session.getHistory(), session.getProvider(), {
-      client: mockClient,
+    const stream = runAgent("Query 1", session.getHistory(), session.getProvider(), {
       systemPrompt: session.getSystemPrompt(),
     });
 
-    let doneEvent: any = null;
-    for await (const event of generator) {
-      if (event.type === "done") {
-        doneEvent = event;
-      }
-    }
+    const events = await collectAgentEvents(stream, { client: mockClient });
+    const doneEvent = events.find((e) => e.type === "done") as any;
 
     // Session history should remain untouched until caller decides to update it
     expect(session.getHistory().length).toBe(0);

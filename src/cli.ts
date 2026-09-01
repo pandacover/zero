@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { createInterface } from "node:readline/promises";
-import { runAgent } from "./agent.ts";
+import { Effect, Stream } from "effect";
+import { createAgentLayer, runAgent } from "./agent.ts";
 import {
   getGlobalDefaultProvider,
   loadProviderConfig,
@@ -485,132 +486,142 @@ export async function runCLI(): Promise<void> {
     const turn = activeSession.startTurn(trimmed);
 
     try {
-      const generator = runAgent(
+      const stream = runAgent(
         trimmed,
         priorHistory,
         providerConfig,
         {
           systemPrompt: activeSession.getSystemPrompt(),
-          tools: activeSession.getTools(),
         }
       );
 
-      for await (const event of generator) {
-        switch (event.type) {
-          case "think:start":
-            spinner.start("Thinking...");
-            break;
+      const agentLayer = createAgentLayer({
+        tools: activeSession.getTools(),
+      });
 
-          case "think:complete":
-            spinner.stop();
-            console.log(`\x1b[35m🧠 Think (${event.durationMs}ms):\x1b[0m`);
-            console.log(`\x1b[90m${event.thought.trim().replace(/^/gm, "  ")}\x1b[0m\n`);
-            activeSession.recordTurnStep(turn.turnIndex, {
-              type: "think",
-              thought: event.thought,
-              durationMs: event.durationMs,
-            });
-            break;
+      const program = stream.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            switch (event.type) {
+              case "think:start":
+                spinner.start("Thinking...");
+                break;
 
-          case "tool:start": {
-            const argsSummary = Object.entries(event.args)
-              .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-              .join(", ");
-            spinner.start(`Executing tool '\x1b[33m${event.toolName}\x1b[0m' (${argsSummary})...`);
-            break;
-          }
+              case "think:complete":
+                spinner.stop();
+                console.log(`\x1b[35m🧠 Think (${event.durationMs}ms):\x1b[0m`);
+                console.log(`\x1b[90m${event.thought.trim().replace(/^/gm, "  ")}\x1b[0m\n`);
+                activeSession.recordTurnStep(turn.turnIndex, {
+                  type: "think",
+                  thought: event.thought,
+                  durationMs: event.durationMs,
+                });
+                break;
 
-          case "tool:complete": {
-            const parsed = event.parsed;
-            const isSuccess = parsed?.outcome === "success";
-            const isToolError = parsed?.toolStatus === "tool_error";
+              case "tool:start": {
+                const argsSummary = Object.entries(event.args)
+                  .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+                  .join(", ");
+                spinner.start(`Executing tool '\x1b[33m${event.toolName}\x1b[0m' (${argsSummary})...`);
+                break;
+              }
 
-            if (isToolError) {
-              spinner.fail(`[${event.toolName}] tool error (${event.durationMs}ms)`);
-              if (parsed?.error?.message) {
-                console.log(`\x1b[31m  Error: ${parsed.error.message}\x1b[0m\n`);
+              case "tool:complete": {
+                const parsed = event.parsed;
+                const isSuccess = parsed?.outcome === "success";
+                const isToolError = parsed?.toolStatus === "tool_error";
+
+                if (isToolError) {
+                  spinner.fail(`[${event.toolName}] tool error (${event.durationMs}ms)`);
+                  if (parsed?.error?.message) {
+                    console.log(`\x1b[31m  Error: ${parsed.error.message}\x1b[0m\n`);
+                  }
+                } else if (parsed?.outcome === "failure" || parsed?.outcome === "timeout") {
+                  spinner.fail(`[${event.toolName}] ${parsed.outcome} (${event.durationMs}ms)`);
+                  if (parsed.execution?.exitCode !== null && parsed.execution?.exitCode !== undefined) {
+                    console.log(`\x1b[31m  Exit Code: ${parsed.execution.exitCode}\x1b[0m`);
+                  }
+                  if (parsed.execution?.stdout) {
+                    const outSnippet = parsed.execution.stdout.length > 250
+                      ? parsed.execution.stdout.slice(0, 250) + "..."
+                      : parsed.execution.stdout;
+                    console.log(`\x1b[90m  ${outSnippet.replace(/\n/g, "\n  ")}\x1b[0m`);
+                  }
+                  if (parsed.execution?.stderr) {
+                    const errSnippet = parsed.execution.stderr.length > 250
+                      ? parsed.execution.stderr.slice(0, 250) + "..."
+                      : parsed.execution.stderr;
+                    console.log(`\x1b[31m  ${errSnippet.replace(/\n/g, "\n  ")}\x1b[0m`);
+                  }
+                  console.log();
+                } else if (parsed?.outcome === "not_found" || parsed?.outcome === "mismatch" || parsed?.outcome === "invalid_target") {
+                  spinner.warn(`[${event.toolName}] ${parsed.outcome} (${event.durationMs}ms)`);
+                  if (parsed.error?.message) {
+                    console.log(`\x1b[33m  Notice: ${parsed.error.message}\x1b[0m\n`);
+                  }
+                } else {
+                  spinner.succeed(`[${event.toolName}] completed (${event.durationMs}ms)`);
+                  const snippet = event.result.length > 200 ? event.result.slice(0, 200) + "..." : event.result;
+                  console.log(`\x1b[90m  Result: ${snippet.replace(/\n/g, "\n  ")}\x1b[0m\n`);
+                }
+
+                activeSession.recordTurnStep(turn.turnIndex, {
+                  type: "tool",
+                  toolName: event.toolName,
+                  args: event.args,
+                  callId: event.callId,
+                  result: event.result,
+                  durationMs: event.durationMs,
+                  toolStatus: parsed?.toolStatus,
+                  outcome: parsed?.outcome,
+                });
+                break;
               }
-            } else if (parsed?.outcome === "failure" || parsed?.outcome === "timeout") {
-              spinner.fail(`[${event.toolName}] ${parsed.outcome} (${event.durationMs}ms)`);
-              if (parsed.execution?.exitCode !== null && parsed.execution?.exitCode !== undefined) {
-                console.log(`\x1b[31m  Exit Code: ${parsed.execution.exitCode}\x1b[0m`);
-              }
-              if (parsed.execution?.stdout) {
-                const outSnippet = parsed.execution.stdout.length > 250
-                  ? parsed.execution.stdout.slice(0, 250) + "..."
-                  : parsed.execution.stdout;
-                console.log(`\x1b[90m  ${outSnippet.replace(/\n/g, "\n  ")}\x1b[0m`);
-              }
-              if (parsed.execution?.stderr) {
-                const errSnippet = parsed.execution.stderr.length > 250
-                  ? parsed.execution.stderr.slice(0, 250) + "..."
-                  : parsed.execution.stderr;
-                console.log(`\x1b[31m  ${errSnippet.replace(/\n/g, "\n  ")}\x1b[0m`);
-              }
-              console.log();
-            } else if (parsed?.outcome === "not_found" || parsed?.outcome === "mismatch" || parsed?.outcome === "invalid_target") {
-              spinner.warn(`[${event.toolName}] ${parsed.outcome} (${event.durationMs}ms)`);
-              if (parsed.error?.message) {
-                console.log(`\x1b[33m  Notice: ${parsed.error.message}\x1b[0m\n`);
-              }
-            } else {
-              spinner.succeed(`[${event.toolName}] completed (${event.durationMs}ms)`);
-              const snippet = event.result.length > 200 ? event.result.slice(0, 200) + "..." : event.result;
-              console.log(`\x1b[90m  Result: ${snippet.replace(/\n/g, "\n  ")}\x1b[0m\n`);
+
+              case "response:start":
+                spinner.start("Generating response...");
+                break;
+
+              case "response:complete":
+                spinner.stop();
+                console.log(`\n\x1b[1m\x1b[32mAgent:\x1b[0m\n${event.content}\n`);
+                activeSession.recordTurnStep(turn.turnIndex, {
+                  type: "response",
+                  content: event.content,
+                  durationMs: event.durationMs,
+                  usage: event.usage,
+                });
+                break;
+
+              case "done":
+                activeSession.setHistory(event.history);
+                activeSession.completeTurn(turn.turnIndex, {
+                  status: "success",
+                  finalResponse: event.finalResponse,
+                  totalDurationMs: event.totalDurationMs,
+                });
+                break;
+
+              case "error":
+                spinner.fail(`Error (${event.phase}): ${event.message}`);
+                console.log();
+                activeSession.recordTurnStep(turn.turnIndex, {
+                  type: "error",
+                  message: event.message,
+                  phase: event.phase,
+                });
+                activeSession.completeTurn(turn.turnIndex, {
+                  status: "error",
+                  error: { message: event.message, phase: event.phase },
+                });
+                break;
             }
+          })
+        ),
+        Effect.provide(agentLayer)
+      );
 
-            activeSession.recordTurnStep(turn.turnIndex, {
-              type: "tool",
-              toolName: event.toolName,
-              args: event.args,
-              callId: event.callId,
-              result: event.result,
-              durationMs: event.durationMs,
-              toolStatus: parsed?.toolStatus,
-              outcome: parsed?.outcome,
-            });
-            break;
-          }
-
-          case "response:start":
-            spinner.start("Generating response...");
-            break;
-
-          case "response:complete":
-            spinner.stop();
-            console.log(`\n\x1b[1m\x1b[32mAgent:\x1b[0m\n${event.content}\n`);
-            activeSession.recordTurnStep(turn.turnIndex, {
-              type: "response",
-              content: event.content,
-              durationMs: event.durationMs,
-              usage: event.usage,
-            });
-            break;
-
-          case "done":
-            activeSession.setHistory(event.history);
-            activeSession.completeTurn(turn.turnIndex, {
-              status: "success",
-              finalResponse: event.finalResponse,
-              totalDurationMs: event.totalDurationMs,
-            });
-            break;
-
-          case "error":
-            spinner.fail(`Error (${event.phase}): ${event.message}`);
-            console.log();
-            activeSession.recordTurnStep(turn.turnIndex, {
-              type: "error",
-              message: event.message,
-              phase: event.phase,
-            });
-            activeSession.completeTurn(turn.turnIndex, {
-              status: "error",
-              error: { message: event.message, phase: event.phase },
-            });
-            break;
-        }
-      }
+      await Effect.runPromise(program);
     } catch (err: any) {
       spinner.stop();
       console.log(`\x1b[31mExecution failed: ${err.message || String(err)}\x1b[0m\n`);
